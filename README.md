@@ -1,6 +1,6 @@
 # Echo Server
 
-A very simple HTTP echo server with support for websockets and server-sent
+This is a very simple HTTP echo server with support for websockets and server-sent
 events (SSE), available at https://echo-websocket.fly.dev/
 
 The server is designed for testing HTTP proxies and clients. It echoes
@@ -76,3 +76,8 @@ The docker container can be built locally with:
 ```
 make docker
 ```
+
+## License
+
+This repository is a fork of https://github.com/jmalloc/echo-server, and the license 
+remains unchanged, see [LICENSE](./LICENSE)
