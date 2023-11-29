@@ -1,7 +1,7 @@
 # Echo Server
 
 A very simple HTTP echo server with support for websockets and server-sent
-events (SSE).
+events (SSE), available at https://echo-websocket.fly.dev/
 
 The server is designed for testing HTTP proxies and clients. It echoes
 information about HTTP request headers and bodies back to the client.
