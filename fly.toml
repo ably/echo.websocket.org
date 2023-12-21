@@ -16,7 +16,7 @@ primary_region = "lhr"
   min_machines_running = 0
   processes = ["app"]
   [http_service.concurrency]
-    type = "requests"
+    type = "connections"
     soft_limit = 2000
     hard_limit = 5000
 
