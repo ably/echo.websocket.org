@@ -16,6 +16,11 @@ primary_region = "lhr"
   min_machines_running = 0
   processes = ["app"]
 
+[services.concurrency]
+    hard_limit = 2500
+    soft_limit = 1500
+    type = "connections"
+
 [[vm]]
   cpu_kind = "shared"
   cpus = 1
