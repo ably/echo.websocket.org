@@ -1,5 +1,8 @@
 # Echo Server
 
+[![CI](https://github.com/ably/echo.websocket.org/actions/workflows/ci.yml/badge.svg)](https://github.com/ably/echo.websocket.org/actions/workflows/ci.yml)
+[![Deploy](https://github.com/ably/echo.websocket.org/actions/workflows/fly.yml/badge.svg)](https://github.com/ably/echo.websocket.org/actions/workflows/fly.yml)
+
 This is a very simple HTTP echo server with support for websockets and server-sent
 events (SSE), available at https://echo-websocket.fly.dev/
 
