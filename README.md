@@ -166,17 +166,40 @@ docker run -p 8080:8080 -e CONNECTION_TIMEOUT_MINUTES=5 echo-server
 
 ### Deploying to Fly.io
 
-This server is configured for deployment on Fly.io:
+This server is configured for deployment on Fly.io. The deployment uses a minimal Docker image built from scratch with just the Go binary.
+
+#### Prerequisites
+
+Before deploying, you need to build the Linux binaries:
+
+```bash
+# Build Linux binaries for both architectures
+mkdir -p artifacts/build/release/linux/amd64
+mkdir -p artifacts/build/release/linux/arm64
+GOOS=linux GOARCH=amd64 go build -o artifacts/build/release/linux/amd64/echo-server ./cmd/echo-server
+GOOS=linux GOARCH=arm64 go build -o artifacts/build/release/linux/arm64/echo-server ./cmd/echo-server
+```
+
+#### Manual Deployment
 
 ```bash
 # First time setup
 fly launch
 
-# Deploy updates
+# Deploy updates (after building binaries)
 fly deploy
 ```
 
-Note: Deployment requires building platform-specific binaries first. The GitHub Actions workflow handles this automatically on push to main.
+#### Automatic Deployment
+
+The GitHub Actions workflow automatically deploys to Fly.io on every push to the main branch. The workflow:
+1. Runs tests to ensure code quality
+2. Builds Linux binaries for both amd64 and arm64 architectures
+3. Deploys using `flyctl deploy --remote-only`
+
+The deployment uses the Dockerfile which copies the platform-specific binary from `artifacts/build/release/$TARGETPLATFORM/echo-server` to `/bin/echo-server` in the container.
+
+Note: The `FLY_API_TOKEN` secret must be configured in the repository settings for automatic deployment to work.
 
 ## License
 
