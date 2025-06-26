@@ -53,13 +53,14 @@ Set the `CONNECTION_TIMEOUT_MINUTES` environment variable to configure the maxim
 duration for WebSocket and SSE connections. The default is 10 minutes. For backward
 compatibility, `WEBSOCKET_TIMEOUT_MINUTES` is still supported but deprecated.
 
-For WebSocket connections: The timeout is reset whenever a message is received from 
-the client. When the timeout is reached, the server sends a close frame with a message 
-indicating the connection has been closed.
+For WebSocket connections: The timeout is absolute and NOT reset by client activity. 
+Connections will be closed after the configured duration regardless of messages being 
+sent or received. When the timeout is reached, the server sends a close frame with a 
+message indicating the connection has been closed.
 
-For SSE connections: The timeout is reset with each event sent (every second). When 
-the timeout is reached, the server sends an error event with the timeout message 
-before closing the connection.
+For SSE connections: The timeout is absolute from connection start. When the timeout 
+is reached, the server sends an error event with the timeout message before closing 
+the connection.
 
 ### Arbitrary Headers
 
@@ -94,7 +95,16 @@ go test -v ./cmd/echo-server -timeout 30s
 go test -cover ./cmd/echo-server
 ```
 
-For more detailed testing information, see [TESTING.md](./TESTING.md).
+### Test Coverage
+
+The test suite includes:
+- WebSocket and SSE echo functionality tests  
+- HTTP echo tests
+- Connection timeout tests (verifying absolute timeout behavior)
+- Configuration tests for environment variables
+- Multiple concurrent client tests
+
+Note: WebSocket connections timeout after the configured duration regardless of activity (absolute timeout, not idle timeout).
 
 ## Running the server
 

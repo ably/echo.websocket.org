@@ -2,7 +2,6 @@ package main
 
 import (
 	"bufio"
-	"context"
 	"fmt"
 	"io"
 	"net/http"
@@ -86,18 +85,38 @@ func TestWebSocketTimeout(t *testing.T) {
 		t.Errorf("Expected echo 'test', got '%s'", string(msg))
 	}
 
-	// Wait for timeout (3 seconds + buffer)
+	// Wait for timeout and read any pending messages
 	time.Sleep(4 * time.Second)
 
-	// Try to send another message - should fail due to timeout
+	// Read any pending messages (including possible timeout message)
+	ws.SetReadDeadline(time.Now().Add(500 * time.Millisecond))
+	for {
+		_, msg, err := ws.ReadMessage()
+		if err != nil {
+			break
+		}
+		// Check if this is the timeout message
+		if strings.Contains(string(msg), "Connection timeout") {
+			t.Logf("Received timeout message: %s", string(msg))
+		}
+	}
+
+	// Give the close a moment to propagate
+	time.Sleep(100 * time.Millisecond)
+
+	// Now try to send another message - should fail due to closed connection
 	err = ws.WriteMessage(websocket.TextMessage, []byte("should fail"))
 	if err == nil {
-		// Try to read - this should definitely fail
-		ws.SetReadDeadline(time.Now().Add(1 * time.Second))
-		_, _, err = ws.ReadMessage()
-		if err == nil {
-			t.Errorf("Expected connection to be closed after timeout, but it's still active")
+		// One more attempt to read to trigger error detection
+		ws.SetReadDeadline(time.Now().Add(100 * time.Millisecond))
+		_, _, readErr := ws.ReadMessage()
+		if readErr == nil {
+			t.Errorf("Expected connection to be closed after timeout, but both write and read succeeded")
+		} else {
+			t.Logf("Read failed as expected: %v", readErr)
 		}
+	} else {
+		t.Logf("Write failed as expected: %v", err)
 	}
 }
 
@@ -120,25 +139,44 @@ func TestWebSocketTimeoutMessage(t *testing.T) {
 	ws.SetReadDeadline(time.Now().Add(100 * time.Millisecond))
 	ws.ReadMessage()
 
-	// Wait for timeout
+	// Wait for timeout and check for timeout message
 	time.Sleep(4 * time.Second)
 	
-	// Try to write - should fail if connection is closed
+	// Try to read - we should either get the timeout message or an error
+	ws.SetReadDeadline(time.Now().Add(1 * time.Second))
+	_, msg, err := ws.ReadMessage()
+	if err == nil && strings.Contains(string(msg), "Connection timeout") {
+		t.Logf("Received timeout message: %s", string(msg))
+		
+		// Give the close a moment to propagate
+		time.Sleep(100 * time.Millisecond)
+		
+		// Now the connection should be closed, try to write
+		err = ws.WriteMessage(websocket.TextMessage, []byte("test after timeout"))
+		if err == nil {
+			// One more attempt to read to trigger error detection
+			ws.SetReadDeadline(time.Now().Add(100 * time.Millisecond))
+			_, _, readErr := ws.ReadMessage()
+			if readErr == nil {
+				t.Errorf("Expected connection to be closed after timeout, but both write and read succeeded")
+			} else {
+				t.Logf("Read failed as expected after timeout: %v", readErr)
+			}
+		} else {
+			t.Logf("Write failed as expected after timeout: %v", err)
+		}
+		return
+	}
+	
+	// If no timeout message, try to write - should fail if connection is closed
 	err = ws.WriteMessage(websocket.TextMessage, []byte("test after timeout"))
 	if err != nil {
 		t.Logf("Write failed as expected after timeout: %v", err)
 		return
 	}
 
-	// If write succeeded, try to read the echo - this should fail
-	ws.SetReadDeadline(time.Now().Add(1 * time.Second))
-	_, _, err = ws.ReadMessage()
-	if err != nil {
-		t.Logf("Read failed as expected after timeout: %v", err)
-		return
-	}
-
-	t.Errorf("Connection still active after timeout - both write and read succeeded")
+	// If write succeeded, the connection is still open - this is an error
+	t.Errorf("Connection still active after timeout")
 }
 
 func TestSSETimeout(t *testing.T) {
@@ -249,7 +287,7 @@ func TestWebSocketReconnectionPrevention(t *testing.T) {
 }
 
 func TestTimeoutWithActivity(t *testing.T) {
-	// Test that WebSocket timeout is reset on activity
+	// Test that WebSocket timeout is NOT reset on activity (absolute timeout)
 	t.Setenv("CONNECTION_TIMEOUT_MINUTES", "0.05") // 3 seconds
 
 	handler := http.HandlerFunc(handler)
@@ -267,40 +305,53 @@ func TestTimeoutWithActivity(t *testing.T) {
 	ws.SetReadDeadline(time.Now().Add(100 * time.Millisecond))
 	_, _, _ = ws.ReadMessage()
 
-	// Send messages every 2 seconds (less than timeout)
-	ctx, cancel := context.WithTimeout(context.Background(), 7*time.Second)
-	defer cancel()
-
-	messageSent := 0
-	ticker := time.NewTicker(2 * time.Second)
+	// Send messages every 1 second (less than timeout)
+	ticker := time.NewTicker(1 * time.Second)
 	defer ticker.Stop()
+
+	start := time.Now()
+	messagesSent := 0
 
 	for {
 		select {
-		case <-ctx.Done():
-			// Successfully kept connection alive for 7 seconds with 3-second timeout
-			if messageSent >= 3 {
-				return // Test passed
-			}
-			t.Errorf("Context expired but only sent %d messages", messageSent)
-			return
 		case <-ticker.C:
-			msg := fmt.Sprintf("keepalive-%d", messageSent)
+			// Try to send a message
+			msg := fmt.Sprintf("keepalive-%d", messagesSent)
 			if err := ws.WriteMessage(websocket.TextMessage, []byte(msg)); err != nil {
-				t.Errorf("Failed to send keepalive message: %v", err)
+				// Connection should close after 3 seconds despite activity
+				elapsed := time.Since(start)
+				if elapsed >= 3*time.Second && elapsed < 5*time.Second {
+					// Expected closure
+					return
+				}
+				t.Errorf("Connection closed at unexpected time: %v", elapsed)
 				return
 			}
-			messageSent++
+			messagesSent++
 
-			// Read echo
-			ws.SetReadDeadline(time.Now().Add(1 * time.Second))
-			_, echo, err := ws.ReadMessage()
+			// Read response
+			ws.SetReadDeadline(time.Now().Add(500 * time.Millisecond))
+			_, reply, err := ws.ReadMessage()
 			if err != nil {
-				t.Errorf("Failed to read echo: %v", err)
+				// Connection should close after 3 seconds despite activity
+				elapsed := time.Since(start)
+				if elapsed >= 3*time.Second && elapsed < 5*time.Second {
+					// Expected closure
+					return
+				}
+				t.Errorf("Failed to read echo at unexpected time: %v, error: %v", elapsed, err)
 				return
 			}
-			if string(echo) != msg {
-				t.Errorf("Expected echo '%s', got '%s'", msg, string(echo))
+			
+			// Check if we received timeout message
+			if strings.Contains(string(reply), "Connection timeout") {
+				// Expected timeout message
+				return
+			}
+
+			// If we've been sending for more than 5 seconds, the timeout should have fired
+			if time.Since(start) > 5*time.Second {
+				t.Error("Connection stayed open longer than timeout period despite absolute timeout")
 				return
 			}
 		}
