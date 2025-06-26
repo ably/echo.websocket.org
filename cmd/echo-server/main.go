@@ -19,8 +19,8 @@ import (
 )
 
 const (
-	// defaultWebSocketTimeoutMinutes is the default timeout for WebSocket connections
-	defaultWebSocketTimeoutMinutes = 10
+	// defaultConnectionTimeoutMinutes is the default timeout for long-lived connections (WebSocket and SSE)
+	defaultConnectionTimeoutMinutes = 10
 )
 
 func main() {
@@ -127,8 +127,13 @@ func serveWebSocket(wr http.ResponseWriter, req *http.Request, sendServerHostnam
 	fmt.Printf("%s | upgraded to websocket\n", req.RemoteAddr)
 
 	// Get timeout configuration
-	timeoutMinutes := defaultWebSocketTimeoutMinutes
-	if timeoutStr := os.Getenv("WEBSOCKET_TIMEOUT_MINUTES"); timeoutStr != "" {
+	timeoutMinutes := defaultConnectionTimeoutMinutes
+	if timeoutStr := os.Getenv("CONNECTION_TIMEOUT_MINUTES"); timeoutStr != "" {
+		if parsed, err := strconv.Atoi(timeoutStr); err == nil && parsed > 0 {
+			timeoutMinutes = parsed
+		}
+	} else if timeoutStr := os.Getenv("WEBSOCKET_TIMEOUT_MINUTES"); timeoutStr != "" {
+		// Backward compatibility
 		if parsed, err := strconv.Atoi(timeoutStr); err == nil && parsed > 0 {
 			timeoutMinutes = parsed
 		}
@@ -211,6 +216,20 @@ func serveSSE(wr http.ResponseWriter, req *http.Request, sendServerHostname bool
 		return
 	}
 
+	// Get timeout configuration (same as WebSocket)
+	timeoutMinutes := defaultConnectionTimeoutMinutes
+	if timeoutStr := os.Getenv("CONNECTION_TIMEOUT_MINUTES"); timeoutStr != "" {
+		if parsed, err := strconv.Atoi(timeoutStr); err == nil && parsed > 0 {
+			timeoutMinutes = parsed
+		}
+	} else if timeoutStr := os.Getenv("WEBSOCKET_TIMEOUT_MINUTES"); timeoutStr != "" {
+		// Backward compatibility
+		if parsed, err := strconv.Atoi(timeoutStr); err == nil && parsed > 0 {
+			timeoutMinutes = parsed
+		}
+	}
+	timeout := time.Duration(timeoutMinutes) * time.Minute
+
 	var echo strings.Builder
 	writeRequest(&echo, req)
 
@@ -243,6 +262,10 @@ func serveSSE(wr http.ResponseWriter, req *http.Request, sendServerHostname bool
 		echo.String(),
 	)
 
+	// Set up timeout timer
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+
 	// Then send a counter event every second.
 	ticker := time.NewTicker(1 * time.Second)
 	defer ticker.Stop()
@@ -250,6 +273,18 @@ func serveSSE(wr http.ResponseWriter, req *http.Request, sendServerHostname bool
 	for {
 		select {
 		case <-req.Context().Done():
+			return
+		case <-timer.C:
+			// Send timeout message via SSE before closing
+			timeoutMsg := fmt.Sprintf("Connection timeout: This connection has been closed after %d minutes. This server is designed for testing with use no longer than %d minutes.", timeoutMinutes, timeoutMinutes)
+			writeSSE(
+				wr,
+				req,
+				&id,
+				"error",
+				timeoutMsg,
+			)
+			fmt.Printf("%s | SSE connection timed out after %d minutes\n", req.RemoteAddr, timeoutMinutes)
 			return
 		case t := <-ticker.C:
 			writeSSE(
@@ -259,6 +294,8 @@ func serveSSE(wr http.ResponseWriter, req *http.Request, sendServerHostname bool
 				"time",
 				t.Format(time.RFC3339),
 			)
+			// Reset timeout on activity (each second when we send time events)
+			timer.Reset(timeout)
 		}
 	}
 }
