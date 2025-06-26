@@ -166,7 +166,21 @@ var websocketHTML = `
                         clearTimeout(messageTimer);
                         clearTimeout(connectTimer);
 
-                        if (autoReconnect) {
+                        // Check if server closed connection due to timeout
+                        var isTimeoutClose = ev.code === 1000 && ev.reason && ev.reason.includes('Connection timeout');
+
+                        if (isTimeoutClose) {
+                            // Server explicitly closed due to timeout - don't reconnect
+                            msgPanel.className = 'hidden';
+                            pauseBtn.className = 'hidden';
+                            resumeBtn.className = 'hidden';
+                            connectBtn.className = '';
+                            disconnectBtn.className = 'hidden';
+                            cancelBtn.className = 'hidden';
+
+                            log('server closed connection: ' + ev.reason, 'error');
+                            log('disconnected (no auto-reconnect for server-initiated timeout)', 'info');
+                        } else if (autoReconnect) {
                             msgPanel.className = 'hidden';
                             pauseBtn.className = 'hidden';
                             resumeBtn.className = 'hidden';
