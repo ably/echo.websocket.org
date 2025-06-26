@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"sort"
@@ -15,6 +16,11 @@ import (
 	"github.com/gorilla/websocket"
 	"golang.org/x/net/http2"
 	"golang.org/x/net/http2/h2c"
+)
+
+const (
+	// defaultWebSocketTimeoutMinutes is the default timeout for WebSocket connections
+	defaultWebSocketTimeoutMinutes = 10
 )
 
 func main() {
@@ -120,6 +126,15 @@ func serveWebSocket(wr http.ResponseWriter, req *http.Request, sendServerHostnam
 	defer connection.Close()
 	fmt.Printf("%s | upgraded to websocket\n", req.RemoteAddr)
 
+	// Get timeout configuration
+	timeoutMinutes := defaultWebSocketTimeoutMinutes
+	if timeoutStr := os.Getenv("WEBSOCKET_TIMEOUT_MINUTES"); timeoutStr != "" {
+		if parsed, err := strconv.Atoi(timeoutStr); err == nil && parsed > 0 {
+			timeoutMinutes = parsed
+		}
+	}
+	timeout := time.Duration(timeoutMinutes) * time.Minute
+
 	var message []byte
 
 	if sendServerHostname {
@@ -134,12 +149,27 @@ func serveWebSocket(wr http.ResponseWriter, req *http.Request, sendServerHostnam
 	err = connection.WriteMessage(websocket.TextMessage, message)
 	if err == nil {
 		var messageType int
+		
+		// Set initial read deadline
+		connection.SetReadDeadline(time.Now().Add(timeout))
 
 		for {
 			messageType, message, err = connection.ReadMessage()
 			if err != nil {
+				// Check if it's a timeout error
+				if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
+					// Send timeout message
+					timeoutMsg := fmt.Sprintf("Connection timeout: This connection has been closed after %d minutes. This server is designed for testing with use no longer than %d minutes.", timeoutMinutes, timeoutMinutes)
+					connection.WriteControl(websocket.CloseMessage, 
+						websocket.FormatCloseMessage(websocket.CloseNormalClosure, timeoutMsg),
+						time.Now().Add(time.Second))
+					fmt.Printf("%s | connection timed out after %d minutes\n", req.RemoteAddr, timeoutMinutes)
+				}
 				break
 			}
+
+			// Reset timeout on activity by updating the read deadline
+			connection.SetReadDeadline(time.Now().Add(timeout))
 
 			if messageType == websocket.TextMessage {
 				fmt.Printf("%s | txt | %s\n", req.RemoteAddr, message)
