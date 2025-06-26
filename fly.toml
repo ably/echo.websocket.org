@@ -18,7 +18,7 @@ primary_region = "lhr"
   [http_service.concurrency]
     type = "connections"
     soft_limit = 5000
-    hard_limit = 15000
+    hard_limit = 7500
 
 [[vm]]
   cpu_kind = "shared"
