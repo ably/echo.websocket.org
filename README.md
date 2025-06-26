@@ -6,6 +6,21 @@ events (SSE), available at https://echo-websocket.fly.dev/
 The server is designed for testing HTTP proxies and clients. It echoes
 information about HTTP request headers and bodies back to the client.
 
+## Quick Start
+
+```bash
+# Clone and build
+git clone https://github.com/ably/echo.websocket.org.git
+cd echo.websocket.org
+go build -o echo-server ./cmd/echo-server
+
+# Run the server
+./echo-server
+
+# Test WebSocket connection
+curl http://localhost:8080/.ws  # Opens WebSocket test UI in browser
+```
+
 ## Behavior
 
 - Any messages sent from a websocket client are echoed as a websocket message.
@@ -61,35 +76,72 @@ SEND_HEADER_ACCESS_CONTROL_ALLOW_HEADERS="*"
 
 ## Running the server
 
-The examples below show a few different ways of running the server with the HTTP
-server bound to a custom TCP port of `10000`.
+### Prerequisites
+
+- Go 1.21 or later
+- Git
 
 ### Running locally
 
-```
-go get -u github.com/jmalloc/echo-server/...
-PORT=10000 echo-server
-```
-
-### Running under Docker
-
-To run the latest version as a container:
-
-```
-docker run --detach -p 10000:8080 jmalloc/echo-server
+1. Clone the repository:
+```bash
+git clone https://github.com/ably/echo.websocket.org.git
+cd echo.websocket.org
 ```
 
-Or, as a swarm service:
+2. Build the server:
+```bash
+go build -o echo-server ./cmd/echo-server
+```
 
-```
-docker service create --publish 10000:8080 jmalloc/echo-server
+3. Run the server:
+```bash
+# Default port 8080
+./echo-server
+
+# Custom port
+PORT=10000 ./echo-server
+
+# With connection timeout (in minutes)
+CONNECTION_TIMEOUT_MINUTES=5 ./echo-server
 ```
 
-The docker container can be built locally with:
+### Running with Docker
 
+1. Build the Docker image:
+```bash
+# Build for your current platform
+docker build -t echo-server .
+
+# Build for multiple platforms (requires buildx)
+docker buildx build --platform linux/amd64,linux/arm64 -t echo-server .
 ```
-make docker
+
+2. Run the container:
+```bash
+# Run on port 8080
+docker run -p 8080:8080 echo-server
+
+# Run on custom port
+docker run -p 10000:8080 -e PORT=8080 echo-server
+
+# Run with custom timeout
+docker run -p 8080:8080 -e CONNECTION_TIMEOUT_MINUTES=5 echo-server
 ```
+
+### Deploying to Fly.io
+
+This server is configured for deployment on Fly.io:
+
+```bash
+# First time setup
+fly launch
+
+# Deploy updates
+fly deploy
+```
+
+Note: Deployment requires building platform-specific binaries first. The GitHub Actions workflow handles this automatically on push to main.
 
 ## License
 
