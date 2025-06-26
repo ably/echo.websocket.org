@@ -5,7 +5,6 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"os"
 	"sort"
@@ -19,8 +18,8 @@ import (
 )
 
 const (
-	// defaultWebSocketTimeoutMinutes is the default timeout for WebSocket connections
-	defaultWebSocketTimeoutMinutes = 10
+	// defaultConnectionTimeoutMinutes is the default timeout for long-lived connections (WebSocket and SSE)
+	defaultConnectionTimeoutMinutes = 10
 )
 
 func main() {
@@ -127,13 +126,18 @@ func serveWebSocket(wr http.ResponseWriter, req *http.Request, sendServerHostnam
 	fmt.Printf("%s | upgraded to websocket\n", req.RemoteAddr)
 
 	// Get timeout configuration
-	timeoutMinutes := defaultWebSocketTimeoutMinutes
-	if timeoutStr := os.Getenv("WEBSOCKET_TIMEOUT_MINUTES"); timeoutStr != "" {
-		if parsed, err := strconv.Atoi(timeoutStr); err == nil && parsed > 0 {
+	timeoutMinutes := float64(defaultConnectionTimeoutMinutes)
+	if timeoutStr := os.Getenv("CONNECTION_TIMEOUT_MINUTES"); timeoutStr != "" {
+		if parsed, err := strconv.ParseFloat(timeoutStr, 64); err == nil && parsed > 0 {
+			timeoutMinutes = parsed
+		}
+	} else if timeoutStr := os.Getenv("WEBSOCKET_TIMEOUT_MINUTES"); timeoutStr != "" {
+		// Backward compatibility
+		if parsed, err := strconv.ParseFloat(timeoutStr, 64); err == nil && parsed > 0 {
 			timeoutMinutes = parsed
 		}
 	}
-	timeout := time.Duration(timeoutMinutes) * time.Minute
+	timeout := time.Duration(timeoutMinutes * float64(time.Minute))
 
 	var message []byte
 
@@ -148,38 +152,78 @@ func serveWebSocket(wr http.ResponseWriter, req *http.Request, sendServerHostnam
 
 	err = connection.WriteMessage(websocket.TextMessage, message)
 	if err == nil {
-		var messageType int
+		// Create channels for communication
+		type wsMessage struct {
+			messageType int
+			message     []byte
+			err         error
+		}
+		messageChan := make(chan wsMessage)
 		
-		// Set initial read deadline
-		connection.SetReadDeadline(time.Now().Add(timeout))
+		// Channel to signal when to stop reading
+		done := make(chan bool)
+		
+		// Start goroutine to read messages
+		go func() {
+			for {
+				select {
+				case <-done:
+					return
+				default:
+					messageType, message, err := connection.ReadMessage()
+					select {
+					case messageChan <- wsMessage{messageType, message, err}:
+					case <-done:
+						return
+					}
+					if err != nil {
+						return
+					}
+				}
+			}
+		}()
+
+		// Create timer for absolute timeout
+		timeoutTimer := time.NewTimer(timeout)
+		defer timeoutTimer.Stop()
 
 		for {
-			messageType, message, err = connection.ReadMessage()
-			if err != nil {
-				// Check if it's a timeout error
-				if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
-					// Send timeout message
-					timeoutMsg := fmt.Sprintf("Connection timeout: This connection has been closed after %d minutes. This server is designed for testing with use no longer than %d minutes.", timeoutMinutes, timeoutMinutes)
-					connection.WriteControl(websocket.CloseMessage, 
-						websocket.FormatCloseMessage(websocket.CloseNormalClosure, timeoutMsg),
-						time.Now().Add(time.Second))
-					fmt.Printf("%s | connection timed out after %d minutes\n", req.RemoteAddr, timeoutMinutes)
+			select {
+			case <-timeoutTimer.C:
+				// Timeout occurred
+				timeoutMsg := fmt.Sprintf("Connection timeout: This connection has been closed after %.2f minutes. This server is designed for testing with use no longer than %.2f minutes.", timeoutMinutes, timeoutMinutes)
+				
+				// Send timeout message as a regular text message first (for better browser compatibility)
+				connection.WriteMessage(websocket.TextMessage, []byte(timeoutMsg))
+				
+				// Then send close frame and close the connection
+				connection.WriteControl(websocket.CloseMessage,
+					websocket.FormatCloseMessage(websocket.CloseNormalClosure, timeoutMsg),
+					time.Now().Add(time.Second))
+				
+				// Signal goroutine to stop and close the connection
+				close(done)
+				connection.Close()
+				
+				fmt.Printf("%s | WebSocket connection timed out after %.2f minutes\n", req.RemoteAddr, timeoutMinutes)
+				return
+				
+			case msg := <-messageChan:
+				if msg.err != nil {
+					err = msg.err
+					return
 				}
-				break
-			}
 
-			// Reset timeout on activity by updating the read deadline
-			connection.SetReadDeadline(time.Now().Add(timeout))
+				if msg.messageType == websocket.TextMessage {
+					fmt.Printf("%s | txt | %s\n", req.RemoteAddr, msg.message)
+				} else {
+					fmt.Printf("%s | bin | %d byte(s)\n", req.RemoteAddr, len(msg.message))
+				}
 
-			if messageType == websocket.TextMessage {
-				fmt.Printf("%s | txt | %s\n", req.RemoteAddr, message)
-			} else {
-				fmt.Printf("%s | bin | %d byte(s)\n", req.RemoteAddr, len(message))
-			}
-
-			err = connection.WriteMessage(messageType, message)
-			if err != nil {
-				break
+				err = connection.WriteMessage(msg.messageType, msg.message)
+				if err != nil {
+					return
+				}
 			}
 		}
 	}
@@ -190,19 +234,38 @@ func serveWebSocket(wr http.ResponseWriter, req *http.Request, sendServerHostnam
 }
 
 func serveHTTP(wr http.ResponseWriter, req *http.Request, sendServerHostname bool) {
-	wr.Header().Add("Content-Type", "text/plain")
+	wr.Header().Add("Content-Type", "text/plain; charset=utf-8")
 	wr.WriteHeader(200)
 
 	if sendServerHostname {
-		host, err := os.Hostname()
+		hostname, err := os.Hostname()
 		if err == nil {
-			fmt.Fprintf(wr, "Request served by %s\n\n", host)
+			fmt.Fprintf(wr, "Request served by %s\n\n", hostname)
 		} else {
 			fmt.Fprintf(wr, "Server hostname unknown: %s\n\n", err.Error())
 		}
 	}
 
+	// Write the echoed request first (maintaining the core functionality)
 	writeRequest(wr, req)
+
+	// Get the host for dynamic URLs
+	scheme := "http"
+	if req.TLS != nil || req.Header.Get("X-Forwarded-Proto") == "https" {
+		scheme = "https"
+	}
+	host := req.Host
+
+	// Add subtle footer with helpful links
+	fmt.Fprintln(wr, "\n----------------------------------------------------------------------")
+	fmt.Fprintln(wr, "         __      __   _                 _        _                    ")
+	fmt.Fprintln(wr, "         \\ \\    / /__| |__  ___ ___  __| |_____| |_                  ")
+	fmt.Fprintln(wr, "          \\ \\/\\/ / -_) '_ \\(_-</ _ \\/ _| / / -_)  _|                 ")
+	fmt.Fprintln(wr, "           \\_/\\_/\\___|_.__//__/\\___/\\__|_\\_\\___|\\__|                 ")
+	fmt.Fprintln(wr, "")
+	fmt.Fprintf(wr, "  WebSocket UI: %s://%s/.ws  |  SSE: %s://%s/.sse\n", scheme, host, scheme, host)
+	fmt.Fprintln(wr, "  Learn more: https://websocket.org/tools/websocket-echo-server")
+	fmt.Fprintln(wr, "----------------------------------------------------------------------")
 }
 
 func serveSSE(wr http.ResponseWriter, req *http.Request, sendServerHostname bool) {
@@ -210,6 +273,20 @@ func serveSSE(wr http.ResponseWriter, req *http.Request, sendServerHostname bool
 		http.Error(wr, "Streaming unsupported!", http.StatusInternalServerError)
 		return
 	}
+
+	// Get timeout configuration (same as WebSocket)
+	timeoutMinutes := float64(defaultConnectionTimeoutMinutes)
+	if timeoutStr := os.Getenv("CONNECTION_TIMEOUT_MINUTES"); timeoutStr != "" {
+		if parsed, err := strconv.ParseFloat(timeoutStr, 64); err == nil && parsed > 0 {
+			timeoutMinutes = parsed
+		}
+	} else if timeoutStr := os.Getenv("WEBSOCKET_TIMEOUT_MINUTES"); timeoutStr != "" {
+		// Backward compatibility
+		if parsed, err := strconv.ParseFloat(timeoutStr, 64); err == nil && parsed > 0 {
+			timeoutMinutes = parsed
+		}
+	}
+	timeout := time.Duration(timeoutMinutes * float64(time.Minute))
 
 	var echo strings.Builder
 	writeRequest(&echo, req)
@@ -243,6 +320,10 @@ func serveSSE(wr http.ResponseWriter, req *http.Request, sendServerHostname bool
 		echo.String(),
 	)
 
+	// Set up timeout timer
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+
 	// Then send a counter event every second.
 	ticker := time.NewTicker(1 * time.Second)
 	defer ticker.Stop()
@@ -250,6 +331,18 @@ func serveSSE(wr http.ResponseWriter, req *http.Request, sendServerHostname bool
 	for {
 		select {
 		case <-req.Context().Done():
+			return
+		case <-timer.C:
+			// Send timeout message via SSE before closing
+			timeoutMsg := fmt.Sprintf("Connection timeout: This connection has been closed after %.2f minutes. This server is designed for testing with use no longer than %.2f minutes.", timeoutMinutes, timeoutMinutes)
+			writeSSE(
+				wr,
+				req,
+				&id,
+				"error",
+				timeoutMsg,
+			)
+			fmt.Printf("%s | SSE connection timed out after %.2f minutes\n", req.RemoteAddr, timeoutMinutes)
 			return
 		case t := <-ticker.C:
 			writeSSE(
@@ -259,6 +352,8 @@ func serveSSE(wr http.ResponseWriter, req *http.Request, sendServerHostname bool
 				"time",
 				t.Format(time.RFC3339),
 			)
+			// Don't reset timeout - SSE should timeout after the configured duration
+			// regardless of server-sent events
 		}
 	}
 }

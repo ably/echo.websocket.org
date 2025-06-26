@@ -1,4 +1,4 @@
-module github.com/jmalloc/echo-server
+module github.com/ably/echo.websocket.org
 
 go 1.21
 

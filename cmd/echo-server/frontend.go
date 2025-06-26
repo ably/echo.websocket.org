@@ -87,6 +87,26 @@ var websocketHTML = `
         padding: 0.5em;
     }
 
+    #footer {
+        margin-top: 1em;
+        padding-top: 0.5em;
+        border-top: 1px dashed lightgray;
+        text-align: center;
+        font-size: 0.9em;
+        color: #666;
+        font-family: Arial, sans-serif;
+    }
+
+    #footer a {
+        color: #0066cc;
+        text-decoration: none;
+        font-weight: bold;
+    }
+
+    #footer a:hover {
+        text-decoration: underline;
+    }
+
     </style>
     <body>
         <div id="panel" />
@@ -100,6 +120,9 @@ var websocketHTML = `
             <div id="msg" class="hidden">
                 <textarea id="content"></textarea>
                 <button id="send">Send Message</button>
+            </div>
+            <div id="footer">
+                Brought to you by <a href="https://websocket.org" target="_blank">WebSocket.org</a>
             </div>
         </div>
         <div id="console" />
@@ -120,6 +143,7 @@ var websocketHTML = `
             var messageTimer = null
             var connectTimer = null
             var counter = 0
+            var lastMessageWasTimeout = false
 
             function send() {
                 var data = counter + ' = 0x' + counter.toString(16);
@@ -134,6 +158,7 @@ var websocketHTML = `
                 log('attempting to connect', 'info')
 
                 autoReconnect = true;
+                lastMessageWasTimeout = false; // Reset timeout flag for new connection
                 msgPanel.className = 'hidden';
                 pauseBtn.className = 'hidden';
                 resumeBtn.className = 'hidden';
@@ -157,16 +182,54 @@ var websocketHTML = `
 
                     console.log(ev);
                     log('connected', 'info');
+                    
+                    // Reset timeout flag on new connection
+                    lastMessageWasTimeout = false;
 
                     clearTimeout(messageTimer);
                     messageTimer = setTimeout(send, messageDelay);
 
                     ws.onclose = function (ev) {
-                        console.log(ev);
+                        console.log('WebSocket close event:', ev);
+                        console.log('Close code:', ev.code);
+                        console.log('Close reason:', ev.reason);
+                        console.log('Was clean:', ev.wasClean);
+                        
                         clearTimeout(messageTimer);
                         clearTimeout(connectTimer);
 
-                        if (autoReconnect) {
+                        // Check if server closed connection due to timeout
+                        // Note: Some browsers may not properly receive the close reason
+                        var isTimeoutClose = false;
+                        
+                        // Check multiple conditions for timeout detection
+                        if (ev.reason && ev.reason.includes('Connection timeout')) {
+                            isTimeoutClose = true;
+                        } else if (ev.code === 1000 && ev.wasClean && lastMessageWasTimeout) {
+                            // Fallback: if we received a timeout message just before close
+                            isTimeoutClose = true;
+                        }
+
+                        if (isTimeoutClose || lastMessageWasTimeout) {
+                            // Server explicitly closed due to timeout - don't reconnect
+                            msgPanel.className = 'hidden';
+                            pauseBtn.className = 'hidden';
+                            resumeBtn.className = 'hidden';
+                            connectBtn.className = '';
+                            disconnectBtn.className = 'hidden';
+                            cancelBtn.className = 'hidden';
+
+                            if (!lastMessageWasTimeout) {
+                                // Only log if we didn't already log in onmessage
+                                var timeoutReason = ev.reason || 'Connection closed by server due to timeout';
+                                log('SERVER TIMEOUT: ' + timeoutReason, 'error');
+                                log('Connection terminated by server - no auto-reconnect', 'error');
+                            }
+                            log('To reconnect, click the Connect button', 'info');
+                            
+                            // Reset the flag for next connection
+                            lastMessageWasTimeout = false;
+                        } else if (autoReconnect) {
                             msgPanel.className = 'hidden';
                             pauseBtn.className = 'hidden';
                             resumeBtn.className = 'hidden';
@@ -194,6 +257,18 @@ var websocketHTML = `
                 };
                 ws.onmessage = function (ev) {
                     console.log(ev);
+                    
+                    // Check if this is a timeout message
+                    if (ev.data && ev.data.includes && ev.data.includes('Connection timeout')) {
+                        lastMessageWasTimeout = true;
+                        autoReconnect = false; // Disable auto-reconnect immediately
+                        
+                        // Log the timeout message prominently
+                        log('SERVER TIMEOUT: ' + ev.data, 'error');
+                        log('Connection will close - no auto-reconnect', 'error');
+                        return; // Don't log as regular message
+                    }
+                    
                     log(ev.data, 'recv');
                 }
                 ws.onerror = function (ev) {
