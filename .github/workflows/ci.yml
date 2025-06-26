@@ -2,10 +2,9 @@ name: CI
 on:
   push:
     branches:
-    - '*'
+      - '*'
   pull_request:
-  schedule:
-  - cron: 0 14 * * 0
+    types: [opened, synchronize, reopened]
 jobs:
   test:
     name: Test
