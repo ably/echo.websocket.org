@@ -1,0 +1,24 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(go build:*)",
+      "Bash(rm:*)",
+      "WebFetch(domain:github.com)",
+      "Bash(make:*)",
+      "Bash(mkdir:*)",
+      "Bash(GOOS=linux GOARCH=amd64 go build -o artifacts/build/release/linux/amd64/echo-server ./cmd/echo-server)",
+      "Bash(GOOS=linux GOARCH=arm64 go build -o artifacts/build/release/linux/arm64/echo-server ./cmd/echo-server)",
+      "Bash(chmod:*)",
+      "Bash(./test_headers.sh:*)",
+      "Bash(curl:*)",
+      "Bash(go test:*)",
+      "Bash(lsof:*)",
+      "Bash(kill:*)",
+      "Bash(ls:*)",
+      "Bash(git push:*)",
+      "Bash(golangci-lint run:*)",
+      "Bash(go install:*)"
+    ],
+    "deny": []
+  }
+}

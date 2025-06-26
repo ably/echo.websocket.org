@@ -25,8 +25,8 @@ func TestWebSocketBasicEcho(t *testing.T) {
 	defer ws.Close()
 
 	// Skip initial server hostname message if present
-	ws.SetReadDeadline(time.Now().Add(100 * time.Millisecond))
-	ws.ReadMessage()
+	_ = ws.SetReadDeadline(time.Now().Add(100 * time.Millisecond))
+	_, _, _ = ws.ReadMessage()
 
 	tests := []struct {
 		name    string
@@ -50,7 +50,9 @@ func TestWebSocketBasicEcho(t *testing.T) {
 			}
 
 			// Read echo
-			ws.SetReadDeadline(time.Now().Add(2 * time.Second))
+			if err := ws.SetReadDeadline(time.Now().Add(2 * time.Second)); err != nil {
+				t.Fatalf("Failed to set read deadline: %v", err)
+			}
 			msgType, msg, err := ws.ReadMessage()
 			if err != nil {
 				t.Fatalf("Failed to read echo: %v", err)
@@ -90,8 +92,8 @@ func TestWebSocketMultipleClients(t *testing.T) {
 		clients[i] = ws
 
 		// Skip initial message
-		ws.SetReadDeadline(time.Now().Add(100 * time.Millisecond))
-		ws.ReadMessage()
+		_ = ws.SetReadDeadline(time.Now().Add(100 * time.Millisecond))
+		_, _, _ = ws.ReadMessage()
 	}
 
 	// Each client sends a unique message
@@ -107,7 +109,9 @@ func TestWebSocketMultipleClients(t *testing.T) {
 	for i, ws := range clients {
 		expectedMsg := string(rune('A' + i)) + " says hello"
 		
-		ws.SetReadDeadline(time.Now().Add(2 * time.Second))
+		if err := ws.SetReadDeadline(time.Now().Add(2 * time.Second)); err != nil {
+			t.Fatalf("Client %d failed to set read deadline: %v", i, err)
+		}
 		_, msg, err := ws.ReadMessage()
 		if err != nil {
 			t.Fatalf("Client %d failed to read echo: %v", i, err)
@@ -256,8 +260,8 @@ func TestWebSocketRapidMessages(t *testing.T) {
 	defer ws.Close()
 
 	// Skip initial message
-	ws.SetReadDeadline(time.Now().Add(100 * time.Millisecond))
-	ws.ReadMessage()
+	_ = ws.SetReadDeadline(time.Now().Add(100 * time.Millisecond))
+	_, _, _ = ws.ReadMessage()
 
 	// Send multiple messages rapidly
 	numMessages := 20
@@ -271,7 +275,9 @@ func TestWebSocketRapidMessages(t *testing.T) {
 
 	// Read all echoes
 	received := 0
-	ws.SetReadDeadline(time.Now().Add(5 * time.Second))
+	if err := ws.SetReadDeadline(time.Now().Add(5 * time.Second)); err != nil {
+		t.Fatalf("Failed to set read deadline: %v", err)
+	}
 	for i := 0; i < numMessages; i++ {
 		expectedMsg := string(rune('A' + (i % 26)))
 		_, msg, err := ws.ReadMessage()
@@ -302,8 +308,8 @@ func TestWebSocketLargeMessage(t *testing.T) {
 	defer ws.Close()
 
 	// Skip initial message
-	ws.SetReadDeadline(time.Now().Add(100 * time.Millisecond))
-	ws.ReadMessage()
+	_ = ws.SetReadDeadline(time.Now().Add(100 * time.Millisecond))
+	_, _, _ = ws.ReadMessage()
 
 	// Create a large message (1MB)
 	largeMsg := strings.Repeat("Hello WebSocket! ", 65536) // ~1MB
@@ -315,7 +321,9 @@ func TestWebSocketLargeMessage(t *testing.T) {
 	}
 
 	// Read echo
-	ws.SetReadDeadline(time.Now().Add(5 * time.Second))
+	if err := ws.SetReadDeadline(time.Now().Add(5 * time.Second)); err != nil {
+		t.Fatalf("Failed to set read deadline: %v", err)
+	}
 	_, echo, err := ws.ReadMessage()
 	if err != nil {
 		t.Fatalf("Failed to read large echo: %v", err)

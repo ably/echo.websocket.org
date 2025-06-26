@@ -67,7 +67,7 @@ func TestWebSocketTimeout(t *testing.T) {
 	defer ws.Close()
 
 	// Read initial message if any
-	ws.SetReadDeadline(time.Now().Add(100 * time.Millisecond))
+	_ = ws.SetReadDeadline(time.Now().Add(100 * time.Millisecond))
 	_, _, _ = ws.ReadMessage() // Ignore initial server hostname message
 
 	// Send a message to ensure connection is active
@@ -76,7 +76,9 @@ func TestWebSocketTimeout(t *testing.T) {
 	}
 
 	// Read the echo
-	ws.SetReadDeadline(time.Now().Add(1 * time.Second))
+	if err := ws.SetReadDeadline(time.Now().Add(1 * time.Second)); err != nil {
+		t.Fatalf("Failed to set read deadline: %v", err)
+	}
 	msgType, msg, err := ws.ReadMessage()
 	if err != nil {
 		t.Fatalf("Failed to read echo: %v", err)
@@ -89,7 +91,7 @@ func TestWebSocketTimeout(t *testing.T) {
 	time.Sleep(4 * time.Second)
 
 	// Read any pending messages (including possible timeout message)
-	ws.SetReadDeadline(time.Now().Add(500 * time.Millisecond))
+	_ = ws.SetReadDeadline(time.Now().Add(500 * time.Millisecond))
 	for {
 		_, msg, err := ws.ReadMessage()
 		if err != nil {
@@ -108,7 +110,7 @@ func TestWebSocketTimeout(t *testing.T) {
 	err = ws.WriteMessage(websocket.TextMessage, []byte("should fail"))
 	if err == nil {
 		// One more attempt to read to trigger error detection
-		ws.SetReadDeadline(time.Now().Add(100 * time.Millisecond))
+		_ = ws.SetReadDeadline(time.Now().Add(100 * time.Millisecond))
 		_, _, readErr := ws.ReadMessage()
 		if readErr == nil {
 			t.Errorf("Expected connection to be closed after timeout, but both write and read succeeded")
@@ -136,14 +138,14 @@ func TestWebSocketTimeoutMessage(t *testing.T) {
 	defer ws.Close()
 
 	// Read any initial message
-	ws.SetReadDeadline(time.Now().Add(100 * time.Millisecond))
-	ws.ReadMessage()
+	_ = ws.SetReadDeadline(time.Now().Add(100 * time.Millisecond))
+	_, _, _ = ws.ReadMessage()
 
 	// Wait for timeout and check for timeout message
 	time.Sleep(4 * time.Second)
 	
 	// Try to read - we should either get the timeout message or an error
-	ws.SetReadDeadline(time.Now().Add(1 * time.Second))
+	_ = ws.SetReadDeadline(time.Now().Add(1 * time.Second))
 	_, msg, err := ws.ReadMessage()
 	if err == nil && strings.Contains(string(msg), "Connection timeout") {
 		t.Logf("Received timeout message: %s", string(msg))
@@ -155,7 +157,7 @@ func TestWebSocketTimeoutMessage(t *testing.T) {
 		err = ws.WriteMessage(websocket.TextMessage, []byte("test after timeout"))
 		if err == nil {
 			// One more attempt to read to trigger error detection
-			ws.SetReadDeadline(time.Now().Add(100 * time.Millisecond))
+			_ = ws.SetReadDeadline(time.Now().Add(100 * time.Millisecond))
 			_, _, readErr := ws.ReadMessage()
 			if readErr == nil {
 				t.Errorf("Expected connection to be closed after timeout, but both write and read succeeded")
@@ -213,7 +215,10 @@ func TestSSETimeout(t *testing.T) {
 			// Look for timeout message
 			if strings.Contains(line, "event: error") {
 				// Read the data line
-				line, _ = reader.ReadString('\n')
+				line, err = reader.ReadString('\n')
+				if err != nil {
+					return
+				}
 				if strings.Contains(line, "Connection timeout") {
 					timeoutChan <- true
 					return
@@ -253,8 +258,8 @@ func TestWebSocketReconnectionPrevention(t *testing.T) {
 	defer ws.Close()
 
 	// Read any initial message
-	ws.SetReadDeadline(time.Now().Add(100 * time.Millisecond))
-	ws.ReadMessage()
+	_ = ws.SetReadDeadline(time.Now().Add(100 * time.Millisecond))
+	_, _, _ = ws.ReadMessage()
 
 	// Send a message before timeout
 	err = ws.WriteMessage(websocket.TextMessage, []byte("before timeout"))
@@ -263,7 +268,7 @@ func TestWebSocketReconnectionPrevention(t *testing.T) {
 	}
 
 	// Read echo
-	ws.SetReadDeadline(time.Now().Add(1 * time.Second))
+	_ = ws.SetReadDeadline(time.Now().Add(1 * time.Second))
 	_, msg, err := ws.ReadMessage()
 	if err != nil || string(msg) != "before timeout" {
 		t.Fatalf("Failed to receive echo before timeout")
@@ -278,7 +283,7 @@ func TestWebSocketReconnectionPrevention(t *testing.T) {
 		t.Logf("Connection closed as expected: %v", err)
 	} else {
 		// Some clients might buffer the write, so also check read
-		ws.SetReadDeadline(time.Now().Add(1 * time.Second))
+		_ = ws.SetReadDeadline(time.Now().Add(1 * time.Second))
 		_, _, err = ws.ReadMessage()
 		if err != nil {
 			t.Logf("Read failed after timeout, connection effectively closed: %v", err)
@@ -302,7 +307,7 @@ func TestTimeoutWithActivity(t *testing.T) {
 	defer ws.Close()
 
 	// Read initial server hostname message if present
-	ws.SetReadDeadline(time.Now().Add(100 * time.Millisecond))
+	_ = ws.SetReadDeadline(time.Now().Add(100 * time.Millisecond))
 	_, _, _ = ws.ReadMessage()
 
 	// Send messages every 1 second (less than timeout)
@@ -312,6 +317,7 @@ func TestTimeoutWithActivity(t *testing.T) {
 	start := time.Now()
 	messagesSent := 0
 
+	//nolint:gosimple // This is not a simple for-range loop, it needs select for ticker
 	for {
 		select {
 		case <-ticker.C:
@@ -330,7 +336,7 @@ func TestTimeoutWithActivity(t *testing.T) {
 			messagesSent++
 
 			// Read response
-			ws.SetReadDeadline(time.Now().Add(500 * time.Millisecond))
+			_ = ws.SetReadDeadline(time.Now().Add(500 * time.Millisecond))
 			_, reply, err := ws.ReadMessage()
 			if err != nil {
 				// Connection should close after 3 seconds despite activity
@@ -375,8 +381,8 @@ func TestBackwardCompatibility(t *testing.T) {
 	defer ws.Close()
 
 	// Read any initial message
-	ws.SetReadDeadline(time.Now().Add(100 * time.Millisecond))
-	ws.ReadMessage()
+	_ = ws.SetReadDeadline(time.Now().Add(100 * time.Millisecond))
+	_, _, _ = ws.ReadMessage()
 
 	// Send a test message before timeout
 	err = ws.WriteMessage(websocket.TextMessage, []byte("test"))
@@ -385,7 +391,7 @@ func TestBackwardCompatibility(t *testing.T) {
 	}
 
 	// Read echo
-	ws.SetReadDeadline(time.Now().Add(1 * time.Second))
+	_ = ws.SetReadDeadline(time.Now().Add(1 * time.Second))
 	_, echo, err := ws.ReadMessage()
 	if err != nil || string(echo) != "test" {
 		t.Fatalf("Failed to receive echo: %v", err)
@@ -400,7 +406,7 @@ func TestBackwardCompatibility(t *testing.T) {
 		t.Logf("Connection closed as expected with WEBSOCKET_TIMEOUT_MINUTES: %v", err)
 	} else {
 		// Check if read fails
-		ws.SetReadDeadline(time.Now().Add(1 * time.Second))
+		_ = ws.SetReadDeadline(time.Now().Add(1 * time.Second))
 		_, _, err = ws.ReadMessage()
 		if err != nil {
 			t.Logf("Read failed after timeout with WEBSOCKET_TIMEOUT_MINUTES: %v", err)

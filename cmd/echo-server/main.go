@@ -166,19 +166,14 @@ func serveWebSocket(wr http.ResponseWriter, req *http.Request, sendServerHostnam
 		// Start goroutine to read messages
 		go func() {
 			for {
+				messageType, message, err := connection.ReadMessage()
 				select {
+				case messageChan <- wsMessage{messageType, message, err}:
 				case <-done:
 					return
-				default:
-					messageType, message, err := connection.ReadMessage()
-					select {
-					case messageChan <- wsMessage{messageType, message, err}:
-					case <-done:
-						return
-					}
-					if err != nil {
-						return
-					}
+				}
+				if err != nil {
+					return
 				}
 			}
 		}()
@@ -194,10 +189,10 @@ func serveWebSocket(wr http.ResponseWriter, req *http.Request, sendServerHostnam
 				timeoutMsg := fmt.Sprintf("Connection timeout: This connection has been closed after %.2f minutes. This server is designed for testing with use no longer than %.2f minutes.", timeoutMinutes, timeoutMinutes)
 				
 				// Send timeout message as a regular text message first (for better browser compatibility)
-				connection.WriteMessage(websocket.TextMessage, []byte(timeoutMsg))
+				_ = connection.WriteMessage(websocket.TextMessage, []byte(timeoutMsg))
 				
 				// Then send close frame and close the connection
-				connection.WriteControl(websocket.CloseMessage,
+				_ = connection.WriteControl(websocket.CloseMessage,
 					websocket.FormatCloseMessage(websocket.CloseNormalClosure, timeoutMsg),
 					time.Now().Add(time.Second))
 				
@@ -210,7 +205,7 @@ func serveWebSocket(wr http.ResponseWriter, req *http.Request, sendServerHostnam
 				
 			case msg := <-messageChan:
 				if msg.err != nil {
-					err = msg.err
+					fmt.Printf("%s | %s\n", req.RemoteAddr, msg.err)
 					return
 				}
 
@@ -220,16 +215,12 @@ func serveWebSocket(wr http.ResponseWriter, req *http.Request, sendServerHostnam
 					fmt.Printf("%s | bin | %d byte(s)\n", req.RemoteAddr, len(msg.message))
 				}
 
-				err = connection.WriteMessage(msg.messageType, msg.message)
-				if err != nil {
+				if writeErr := connection.WriteMessage(msg.messageType, msg.message); writeErr != nil {
+					fmt.Printf("%s | %s\n", req.RemoteAddr, writeErr)
 					return
 				}
 			}
 		}
-	}
-
-	if err != nil {
-		fmt.Printf("%s | %s\n", req.RemoteAddr, err)
 	}
 }
 
