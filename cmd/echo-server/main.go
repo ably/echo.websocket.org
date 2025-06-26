@@ -127,18 +127,18 @@ func serveWebSocket(wr http.ResponseWriter, req *http.Request, sendServerHostnam
 	fmt.Printf("%s | upgraded to websocket\n", req.RemoteAddr)
 
 	// Get timeout configuration
-	timeoutMinutes := defaultConnectionTimeoutMinutes
+	timeoutMinutes := float64(defaultConnectionTimeoutMinutes)
 	if timeoutStr := os.Getenv("CONNECTION_TIMEOUT_MINUTES"); timeoutStr != "" {
-		if parsed, err := strconv.Atoi(timeoutStr); err == nil && parsed > 0 {
+		if parsed, err := strconv.ParseFloat(timeoutStr, 64); err == nil && parsed > 0 {
 			timeoutMinutes = parsed
 		}
 	} else if timeoutStr := os.Getenv("WEBSOCKET_TIMEOUT_MINUTES"); timeoutStr != "" {
 		// Backward compatibility
-		if parsed, err := strconv.Atoi(timeoutStr); err == nil && parsed > 0 {
+		if parsed, err := strconv.ParseFloat(timeoutStr, 64); err == nil && parsed > 0 {
 			timeoutMinutes = parsed
 		}
 	}
-	timeout := time.Duration(timeoutMinutes) * time.Minute
+	timeout := time.Duration(timeoutMinutes * float64(time.Minute))
 
 	var message []byte
 
@@ -164,11 +164,11 @@ func serveWebSocket(wr http.ResponseWriter, req *http.Request, sendServerHostnam
 				// Check if it's a timeout error
 				if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
 					// Send timeout message
-					timeoutMsg := fmt.Sprintf("Connection timeout: This connection has been closed after %d minutes. This server is designed for testing with use no longer than %d minutes.", timeoutMinutes, timeoutMinutes)
+					timeoutMsg := fmt.Sprintf("Connection timeout: This connection has been closed after %.2f minutes. This server is designed for testing with use no longer than %.2f minutes.", timeoutMinutes, timeoutMinutes)
 					connection.WriteControl(websocket.CloseMessage,
 						websocket.FormatCloseMessage(websocket.CloseNormalClosure, timeoutMsg),
 						time.Now().Add(time.Second))
-					fmt.Printf("%s | WebSocket connection timed out after %d minutes\n", req.RemoteAddr, timeoutMinutes)
+					fmt.Printf("%s | WebSocket connection timed out after %.2f minutes\n", req.RemoteAddr, timeoutMinutes)
 				}
 				break
 			}
@@ -236,18 +236,18 @@ func serveSSE(wr http.ResponseWriter, req *http.Request, sendServerHostname bool
 	}
 
 	// Get timeout configuration (same as WebSocket)
-	timeoutMinutes := defaultConnectionTimeoutMinutes
+	timeoutMinutes := float64(defaultConnectionTimeoutMinutes)
 	if timeoutStr := os.Getenv("CONNECTION_TIMEOUT_MINUTES"); timeoutStr != "" {
-		if parsed, err := strconv.Atoi(timeoutStr); err == nil && parsed > 0 {
+		if parsed, err := strconv.ParseFloat(timeoutStr, 64); err == nil && parsed > 0 {
 			timeoutMinutes = parsed
 		}
 	} else if timeoutStr := os.Getenv("WEBSOCKET_TIMEOUT_MINUTES"); timeoutStr != "" {
 		// Backward compatibility
-		if parsed, err := strconv.Atoi(timeoutStr); err == nil && parsed > 0 {
+		if parsed, err := strconv.ParseFloat(timeoutStr, 64); err == nil && parsed > 0 {
 			timeoutMinutes = parsed
 		}
 	}
-	timeout := time.Duration(timeoutMinutes) * time.Minute
+	timeout := time.Duration(timeoutMinutes * float64(time.Minute))
 
 	var echo strings.Builder
 	writeRequest(&echo, req)
@@ -295,7 +295,7 @@ func serveSSE(wr http.ResponseWriter, req *http.Request, sendServerHostname bool
 			return
 		case <-timer.C:
 			// Send timeout message via SSE before closing
-			timeoutMsg := fmt.Sprintf("Connection timeout: This connection has been closed after %d minutes. This server is designed for testing with use no longer than %d minutes.", timeoutMinutes, timeoutMinutes)
+			timeoutMsg := fmt.Sprintf("Connection timeout: This connection has been closed after %.2f minutes. This server is designed for testing with use no longer than %.2f minutes.", timeoutMinutes, timeoutMinutes)
 			writeSSE(
 				wr,
 				req,
@@ -303,7 +303,7 @@ func serveSSE(wr http.ResponseWriter, req *http.Request, sendServerHostname bool
 				"error",
 				timeoutMsg,
 			)
-			fmt.Printf("%s | SSE connection timed out after %d minutes\n", req.RemoteAddr, timeoutMinutes)
+			fmt.Printf("%s | SSE connection timed out after %.2f minutes\n", req.RemoteAddr, timeoutMinutes)
 			return
 		case t := <-ticker.C:
 			writeSSE(
@@ -313,8 +313,8 @@ func serveSSE(wr http.ResponseWriter, req *http.Request, sendServerHostname bool
 				"time",
 				t.Format(time.RFC3339),
 			)
-			// Reset timeout on activity (each second when we send time events)
-			timer.Reset(timeout)
+			// Don't reset timeout - SSE should timeout after the configured duration
+			// regardless of server-sent events
 		}
 	}
 }

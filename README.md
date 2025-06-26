@@ -74,6 +74,28 @@ SEND_HEADER_ACCESS_CONTROL_ALLOW_METHODS="*"
 SEND_HEADER_ACCESS_CONTROL_ALLOW_HEADERS="*"
 ```
 
+## Testing
+
+The server includes a comprehensive test suite covering HTTP echo, WebSocket, SSE, and timeout functionality.
+
+### Running tests
+
+```bash
+# Run all tests
+go test -v ./cmd/echo-server
+
+# Run specific test pattern
+go test -v ./cmd/echo-server -run TestWebSocket
+
+# Run tests with custom timeout
+go test -v ./cmd/echo-server -timeout 30s
+
+# Run tests with coverage
+go test -cover ./cmd/echo-server
+```
+
+For more detailed testing information, see [TESTING.md](./TESTING.md).
+
 ## Running the server
 
 ### Prerequisites
@@ -145,5 +167,6 @@ Note: Deployment requires building platform-specific binaries first. The GitHub 
 
 ## License
 
-This repository is a fork of https://github.com/jmalloc/echo-server, and the license 
-remains unchanged, see [LICENSE](./LICENSE)
+This project is licensed under the MIT License - see [LICENSE](./LICENSE) for details.
+
+Originally forked from https://github.com/jmalloc/echo-server
