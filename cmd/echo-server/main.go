@@ -154,7 +154,7 @@ func serveWebSocket(wr http.ResponseWriter, req *http.Request, sendServerHostnam
 	err = connection.WriteMessage(websocket.TextMessage, message)
 	if err == nil {
 		var messageType int
-		
+
 		// Set initial read deadline
 		connection.SetReadDeadline(time.Now().Add(timeout))
 
@@ -165,10 +165,10 @@ func serveWebSocket(wr http.ResponseWriter, req *http.Request, sendServerHostnam
 				if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
 					// Send timeout message
 					timeoutMsg := fmt.Sprintf("Connection timeout: This connection has been closed after %d minutes. This server is designed for testing with use no longer than %d minutes.", timeoutMinutes, timeoutMinutes)
-					connection.WriteControl(websocket.CloseMessage, 
+					connection.WriteControl(websocket.CloseMessage,
 						websocket.FormatCloseMessage(websocket.CloseNormalClosure, timeoutMsg),
 						time.Now().Add(time.Second))
-					fmt.Printf("%s | connection timed out after %d minutes\n", req.RemoteAddr, timeoutMinutes)
+					fmt.Printf("%s | WebSocket connection timed out after %d minutes\n", req.RemoteAddr, timeoutMinutes)
 				}
 				break
 			}
@@ -195,19 +195,38 @@ func serveWebSocket(wr http.ResponseWriter, req *http.Request, sendServerHostnam
 }
 
 func serveHTTP(wr http.ResponseWriter, req *http.Request, sendServerHostname bool) {
-	wr.Header().Add("Content-Type", "text/plain")
+	wr.Header().Add("Content-Type", "text/plain; charset=utf-8")
 	wr.WriteHeader(200)
 
 	if sendServerHostname {
-		host, err := os.Hostname()
+		hostname, err := os.Hostname()
 		if err == nil {
-			fmt.Fprintf(wr, "Request served by %s\n\n", host)
+			fmt.Fprintf(wr, "Request served by %s\n\n", hostname)
 		} else {
 			fmt.Fprintf(wr, "Server hostname unknown: %s\n\n", err.Error())
 		}
 	}
 
+	// Write the echoed request first (maintaining the core functionality)
 	writeRequest(wr, req)
+
+	// Get the host for dynamic URLs
+	scheme := "http"
+	if req.TLS != nil || req.Header.Get("X-Forwarded-Proto") == "https" {
+		scheme = "https"
+	}
+	host := req.Host
+
+	// Add subtle footer with helpful links
+	fmt.Fprintln(wr, "\n----------------------------------------------------------------------")
+	fmt.Fprintln(wr, "         __      __   _                 _        _                    ")
+	fmt.Fprintln(wr, "         \\ \\    / /__| |__  ___ ___  __| |_____| |_                  ")
+	fmt.Fprintln(wr, "          \\ \\/\\/ / -_) '_ \\(_-</ _ \\/ _| / / -_)  _|                 ")
+	fmt.Fprintln(wr, "           \\_/\\_/\\___|_.__//__/\\___/\\__|_\\_\\___|\\__|                 ")
+	fmt.Fprintln(wr, "")
+	fmt.Fprintf(wr, "  WebSocket UI: %s://%s/.ws  |  SSE: %s://%s/.sse\n", scheme, host, scheme, host)
+	fmt.Fprintln(wr, "  Learn more: https://websocket.org/tools/websocket-echo-server")
+	fmt.Fprintln(wr, "----------------------------------------------------------------------")
 }
 
 func serveSSE(wr http.ResponseWriter, req *http.Request, sendServerHostname bool) {

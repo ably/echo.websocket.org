@@ -87,6 +87,26 @@ var websocketHTML = `
         padding: 0.5em;
     }
 
+    #footer {
+        margin-top: 1em;
+        padding-top: 0.5em;
+        border-top: 1px dashed lightgray;
+        text-align: center;
+        font-size: 0.9em;
+        color: #666;
+        font-family: Arial, sans-serif;
+    }
+
+    #footer a {
+        color: #0066cc;
+        text-decoration: none;
+        font-weight: bold;
+    }
+
+    #footer a:hover {
+        text-decoration: underline;
+    }
+
     </style>
     <body>
         <div id="panel" />
@@ -100,6 +120,9 @@ var websocketHTML = `
             <div id="msg" class="hidden">
                 <textarea id="content"></textarea>
                 <button id="send">Send Message</button>
+            </div>
+            <div id="footer">
+                Brought to you by <a href="https://websocket.org" target="_blank">WebSocket.org</a>
             </div>
         </div>
         <div id="console" />
