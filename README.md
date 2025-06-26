@@ -32,6 +32,14 @@ server from responding with its hostname before echoing the request. The client
 may send the `X-Send-Server-Hostname` request header to `true` or `false` to
 override this server-wide setting on a per-request basis.
 
+### WebSocket Connection Timeout
+
+Set the `WEBSOCKET_TIMEOUT_MINUTES` environment variable to configure the maximum
+duration for WebSocket connections. The default is 10 minutes. When a connection
+reaches the timeout, the server sends a close frame with a message indicating the
+connection has been closed due to timeout. The timeout is reset whenever a message
+is received from the client.
+
 ### Arbitrary Headers
 
 Set the `SEND_HEADER_<header-name>` variable to send arbitrary additional

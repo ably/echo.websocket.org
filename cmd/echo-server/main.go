@@ -120,6 +120,23 @@ func serveWebSocket(wr http.ResponseWriter, req *http.Request, sendServerHostnam
 	defer connection.Close()
 	fmt.Printf("%s | upgraded to websocket\n", req.RemoteAddr)
 
+	// Get timeout configuration
+	timeoutMinutes := 10 // default 10 minutes
+	if timeoutStr := os.Getenv("WEBSOCKET_TIMEOUT_MINUTES"); timeoutStr != "" {
+		if parsed, err := strconv.Atoi(timeoutStr); err == nil && parsed > 0 {
+			timeoutMinutes = parsed
+		}
+	}
+	timeout := time.Duration(timeoutMinutes) * time.Minute
+
+	// Set up timeout timer
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+
+	// Channel to signal when to stop the read loop
+	done := make(chan struct{})
+	defer close(done)
+
 	var message []byte
 
 	if sendServerHostname {
@@ -135,11 +152,31 @@ func serveWebSocket(wr http.ResponseWriter, req *http.Request, sendServerHostnam
 	if err == nil {
 		var messageType int
 
+		// Start goroutine to handle timeout
+		go func() {
+			select {
+			case <-timer.C:
+				// Send timeout message
+				timeoutMsg := fmt.Sprintf("Connection timeout: This connection has been closed after %d minutes. This server is designed for testing with use no longer than %d minutes.", timeoutMinutes, timeoutMinutes)
+				connection.WriteControl(websocket.CloseMessage, 
+					websocket.FormatCloseMessage(websocket.CloseNormalClosure, timeoutMsg),
+					time.Now().Add(time.Second))
+				connection.Close()
+				fmt.Printf("%s | connection timed out after %d minutes\n", req.RemoteAddr, timeoutMinutes)
+			case <-done:
+				// Connection closed normally
+				return
+			}
+		}()
+
 		for {
 			messageType, message, err = connection.ReadMessage()
 			if err != nil {
 				break
 			}
+
+			// Reset timeout on activity
+			timer.Reset(timeout)
 
 			if messageType == websocket.TextMessage {
 				fmt.Printf("%s | txt | %s\n", req.RemoteAddr, message)
