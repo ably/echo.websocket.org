@@ -159,10 +159,10 @@ func serveWebSocket(wr http.ResponseWriter, req *http.Request, sendServerHostnam
 			err         error
 		}
 		messageChan := make(chan wsMessage)
-		
+
 		// Channel to signal when to stop reading
 		done := make(chan bool)
-		
+
 		// Start goroutine to read messages
 		go func() {
 			for {
@@ -181,28 +181,30 @@ func serveWebSocket(wr http.ResponseWriter, req *http.Request, sendServerHostnam
 		// Create timer for absolute timeout
 		timeoutTimer := time.NewTimer(timeout)
 		defer timeoutTimer.Stop()
+		// Ensure done channel is closed when function returns to prevent goroutine leak
+		defer close(done)
 
 		for {
 			select {
 			case <-timeoutTimer.C:
 				// Timeout occurred
 				timeoutMsg := fmt.Sprintf("Connection timeout: This connection has been closed after %.2f minutes. This server is designed for testing with use no longer than %.2f minutes.", timeoutMinutes, timeoutMinutes)
-				
+
 				// Send timeout message as a regular text message first (for better browser compatibility)
 				_ = connection.WriteMessage(websocket.TextMessage, []byte(timeoutMsg))
-				
+
 				// Then send close frame and close the connection
 				_ = connection.WriteControl(websocket.CloseMessage,
 					websocket.FormatCloseMessage(websocket.CloseNormalClosure, timeoutMsg),
 					time.Now().Add(time.Second))
-				
+
 				// Signal goroutine to stop and close the connection
 				close(done)
 				connection.Close()
-				
+
 				fmt.Printf("%s | WebSocket connection timed out after %.2f minutes\n", req.RemoteAddr, timeoutMinutes)
 				return
-				
+
 			case msg := <-messageChan:
 				if msg.err != nil {
 					fmt.Printf("%s | %s\n", req.RemoteAddr, msg.err)
