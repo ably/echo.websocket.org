@@ -4,7 +4,7 @@
 [![Deploy](https://github.com/ably/echo.websocket.org/actions/workflows/fly.yml/badge.svg)](https://github.com/ably/echo.websocket.org/actions/workflows/fly.yml)
 
 This is a very simple HTTP echo server with support for websockets and server-sent
-events (SSE), available at https://echo-websocket.fly.dev/
+events (SSE), available at https://echo.websocket.org/
 
 The server is designed for testing HTTP proxies and clients. It echoes
 information about HTTP request headers and bodies back to the client.
@@ -64,6 +64,80 @@ message indicating the connection has been closed.
 For SSE connections: The timeout is absolute from connection start. When the timeout 
 is reached, the server sends an error event with the timeout message before closing 
 the connection.
+
+### Rate Limiting
+
+The server includes built-in rate limiting to prevent abuse. It operates in local mode with per-instance rate limiting.
+
+#### Configuration
+
+Rate limiting can be configured via environment variables:
+
+- `RATE_LIMIT_ENABLED` - Enable/disable rate limiting (default: `true`)
+- `RATE_LIMIT_RPS` - Requests per second per IP (default: `2`)
+- `RATE_LIMIT_BURST` - Burst size for rate limiter (default: `10`)
+- `RATE_LIMIT_BLOCK_DURATION` - Block duration in seconds when rate limit is exceeded (default: `300`)
+- `WEBSOCKET_CONNECTION_LIMIT` - Max concurrent WebSocket connections per IP (default: `3`)
+- `SSE_CONNECTION_LIMIT` - Max concurrent SSE connections per IP (default: `3`)
+
+
+### Health Monitoring
+
+The server exposes a health endpoint at `/.health` that provides comprehensive status information including:
+
+- Server status and version
+- Rate limiter configuration and metrics
+- Current connections (WebSocket and SSE)
+- Request rates (1min and 5min windows)
+- Blocked IPs and block rates
+
+Example:
+```bash
+curl https://echo.websocket.org/.health | jq
+```
+
+Response:
+```json
+{
+  "status": "healthy",
+  "rate_limiter": {
+    "enabled": true,
+    "requests_per_second": 2.0,
+    "burst_size": 10,
+    "block_duration_seconds": 300,
+    "websocket_connection_limit": 3,
+    "sse_connection_limit": 3,
+    "tracked_ips": 42,
+    "blocked_ips": 2
+  },
+  "metrics": {
+    "current_connections": {
+      "websocket": 15,
+      "sse": 3
+    },
+    "request_rates": {
+      "per_minute": 120.5,
+      "per_5_minutes": 580.2
+    },
+    "websocket_rates": {
+      "per_minute": 5.0,
+      "per_5_minutes": 22.0
+    },
+    "sse_rates": {
+      "per_minute": 2.0,
+      "per_5_minutes": 8.0
+    },
+    "block_rates": {
+      "per_minute": 0.5,
+      "per_5_minutes": 2.0
+    }
+  },
+  "server": {
+    "hostname": "4d896d95b55478",
+    "version": "2.1"
+  }
+}
+```
 
 ### Arbitrary Headers
 
@@ -200,6 +274,7 @@ The GitHub Actions workflow automatically deploys to Fly.io on every push to the
 The deployment uses the Dockerfile which copies the platform-specific binary from `artifacts/build/release/$TARGETPLATFORM/echo-server` to `/bin/echo-server` in the container.
 
 Note: The `FLY_API_TOKEN` secret must be configured in the repository settings for automatic deployment to work.
+
 
 ## License
 

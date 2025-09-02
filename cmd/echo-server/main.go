@@ -22,13 +22,23 @@ const (
 	defaultConnectionTimeoutMinutes = 10
 )
 
+var rateLimiter *RateLimiter
+
 func main() {
 	port := os.Getenv("PORT")
 	if port == "" {
 		port = "8080"
 	}
 
-	fmt.Printf("Echo server listening on port %s.\n", port)
+	// Initialize rate limiter
+	rateLimiter = NewRateLimiter()
+	defer rateLimiter.Close()
+	
+	// Start health reporting
+	hostname, _ := os.Hostname()
+	rateLimiter.StartHealthReporter(hostname)
+
+	fmt.Printf("🚀 Echo server v2.1 (IP-FIXED) listening on port %s.\n", port)
 
 	err := http.ListenAndServe(
 		":"+port,
@@ -51,10 +61,27 @@ var upgrader = websocket.Upgrader{
 func handler(wr http.ResponseWriter, req *http.Request) {
 	defer req.Body.Close()
 
+	// Extract real IP for rate limiting
+	clientIP := GetRealIP(req.Header)
+	
+	// Check rate limit
+	allowed, blockedUntil := rateLimiter.AllowRequest(clientIP)
+	if !allowed {
+		fmt.Printf("🚫 RATE_LIMIT_v2: %s | %s %s (blocked until %s)\n", 
+			clientIP, req.Method, req.URL, blockedUntil.Format(time.RFC3339))
+		handleRateLimitExceeded(wr, req, blockedUntil, clientIP)
+		return
+	}
+	
+	// Debug logging with real client IP
+	if os.Getenv("DEBUG_RATE_LIMIT") != "" {
+		fmt.Printf("✅ RATE_LIMIT: %s | %s %s (allowed)\n", clientIP, req.Method, req.URL)
+	}
+
 	if os.Getenv("LOG_HTTP_BODY") != "" || os.Getenv("LOG_HTTP_HEADERS") != "" {
-		fmt.Printf("--------  %s | %s %s\n", req.RemoteAddr, req.Method, req.URL)
+		fmt.Printf("--------  %s | %s %s\n", clientIP, req.Method, req.URL)
 	} else {
-		fmt.Printf("%s | %s %s\n", req.RemoteAddr, req.Method, req.URL)
+		fmt.Printf("%s | %s %s\n", clientIP, req.Method, req.URL)
 	}
 
 	if os.Getenv("LOG_HTTP_HEADERS") != "" {
@@ -103,19 +130,31 @@ func handler(wr http.ResponseWriter, req *http.Request) {
 	}
 
 	if websocket.IsWebSocketUpgrade(req) {
-		serveWebSocket(wr, req, sendServerHostname)
+		serveWebSocket(wr, req, sendServerHostname, clientIP)
 	} else if req.URL.Path == "/.ws" {
 		wr.Header().Add("Content-Type", "text/html")
 		wr.WriteHeader(200)
 		io.WriteString(wr, websocketHTML) // nolint:errcheck
 	} else if req.URL.Path == "/.sse" {
-		serveSSE(wr, req, sendServerHostname)
+		serveSSE(wr, req, sendServerHostname, clientIP)
+	} else if req.URL.Path == "/.health" {
+		serveHealthCheck(wr, req)
 	} else {
 		serveHTTP(wr, req, sendServerHostname)
 	}
 }
 
-func serveWebSocket(wr http.ResponseWriter, req *http.Request, sendServerHostname bool) {
+func serveWebSocket(wr http.ResponseWriter, req *http.Request, sendServerHostname bool, clientIP string) {
+	// Check WebSocket connection limit
+	if !rateLimiter.TrackConnection(clientIP, "websocket") {
+		wr.WriteHeader(http.StatusTooManyRequests)
+		wr.Header().Set("Content-Type", "text/plain")
+		fmt.Fprintf(wr, "Too many WebSocket connections from your IP (limit: %d). Please try again later.", 
+			rateLimiter.wsMaxConnections)
+		return
+	}
+	defer rateLimiter.ReleaseConnection(clientIP, "websocket")
+	
 	connection, err := upgrader.Upgrade(wr, req, nil)
 	if err != nil {
 		fmt.Printf("%s | %s\n", req.RemoteAddr, err)
@@ -193,7 +232,7 @@ func serveWebSocket(wr http.ResponseWriter, req *http.Request, sendServerHostnam
 				// Send timeout message as a regular text message first (for better browser compatibility)
 				_ = connection.WriteMessage(websocket.TextMessage, []byte(timeoutMsg))
 
-				// Then send close frame and close the connection
+				// Then send close frame with timeout
 				_ = connection.WriteControl(websocket.CloseMessage,
 					websocket.FormatCloseMessage(websocket.CloseNormalClosure, timeoutMsg),
 					time.Now().Add(time.Second))
@@ -223,6 +262,49 @@ func serveWebSocket(wr http.ResponseWriter, req *http.Request, sendServerHostnam
 			}
 		}
 	}
+}
+
+func handleRateLimitExceeded(wr http.ResponseWriter, req *http.Request, blockedUntil time.Time, clientIP string) {
+	retryAfter := int(time.Until(blockedUntil).Seconds())
+	if retryAfter < 1 {
+		retryAfter = 1
+	}
+	
+	// Set rate limit headers
+	wr.Header().Set("Retry-After", strconv.Itoa(retryAfter))
+	wr.Header().Set("X-RateLimit-Limit", fmt.Sprintf("%.0f", rateLimiter.requestsPerSecond))
+	wr.Header().Set("X-RateLimit-Remaining", "0")
+	wr.Header().Set("X-RateLimit-Reset", strconv.FormatInt(blockedUntil.Unix(), 10))
+	
+	// Different response based on transport
+	if websocket.IsWebSocketUpgrade(req) {
+		// For WebSocket, return error before upgrade
+		wr.Header().Set("Content-Type", "text/plain")
+		wr.WriteHeader(http.StatusTooManyRequests)
+		fmt.Fprintf(wr, "Rate limit exceeded. You are blocked for %d seconds. Please slow down your request rate.", retryAfter)
+	} else if req.URL.Path == "/.sse" {
+		// For SSE, send error event
+		wr.Header().Set("Content-Type", "text/event-stream")
+		wr.Header().Set("Cache-Control", "no-cache")
+		wr.WriteHeader(http.StatusTooManyRequests)
+		fmt.Fprintf(wr, "event: error\n")
+		fmt.Fprintf(wr, "data: Rate limit exceeded. Blocked for %d seconds.\n", retryAfter)
+		fmt.Fprintf(wr, "retry: %d000\n\n", retryAfter)
+		if flusher, ok := wr.(http.Flusher); ok {
+			flusher.Flush()
+		}
+	} else {
+		// For HTTP, return plain text
+		wr.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		wr.WriteHeader(http.StatusTooManyRequests)
+		fmt.Fprintf(wr, "Rate limit exceeded.\n\n")
+		fmt.Fprintf(wr, "You have been temporarily blocked for %d seconds.\n", retryAfter)
+		fmt.Fprintf(wr, "Current limit: %.0f requests per second with burst of %d.\n", 
+			rateLimiter.requestsPerSecond, rateLimiter.burstSize)
+		fmt.Fprintf(wr, "Please reduce your request rate.\n")
+	}
+	
+	fmt.Printf("%s | Rate limited (blocked for %ds)\n", clientIP, retryAfter)
 }
 
 func serveHTTP(wr http.ResponseWriter, req *http.Request, sendServerHostname bool) {
@@ -260,7 +342,15 @@ func serveHTTP(wr http.ResponseWriter, req *http.Request, sendServerHostname boo
 	fmt.Fprintln(wr, "----------------------------------------------------------------------")
 }
 
-func serveSSE(wr http.ResponseWriter, req *http.Request, sendServerHostname bool) {
+func serveSSE(wr http.ResponseWriter, req *http.Request, sendServerHostname bool, clientIP string) {
+	// Check SSE connection limit
+	if !rateLimiter.TrackConnection(clientIP, "sse") {
+		http.Error(wr, fmt.Sprintf("Too many SSE connections from your IP (limit: %d). Please try again later.", 
+			rateLimiter.sseMaxConnections), http.StatusTooManyRequests)
+		return
+	}
+	defer rateLimiter.ReleaseConnection(clientIP, "sse")
+	
 	if _, ok := wr.(http.Flusher); !ok {
 		http.Error(wr, "Streaming unsupported!", http.StatusInternalServerError)
 		return
@@ -408,4 +498,77 @@ func printHeaders(w io.Writer, h http.Header) {
 			fmt.Fprintf(w, "%s: %s\n", key, value)
 		}
 	}
+}
+
+// serveHealthCheck returns health status and metrics
+func serveHealthCheck(wr http.ResponseWriter, req *http.Request) {
+	status := rateLimiter.GetStatus()
+	metrics := rateLimiter.GetMetrics()
+	hostname := getHostname()
+	
+	wr.Header().Set("Content-Type", "application/json")
+	wr.WriteHeader(http.StatusOK)
+	
+	fmt.Fprintf(wr, `{
+  "status": "healthy",
+  "instance": {
+    "hostname": %q,
+    "rate_limiter": {
+      "enabled": %t,
+      "requests_per_second": %.1f,
+      "burst_size": %d,
+      "block_duration_seconds": %d,
+      "websocket_connection_limit": %d,
+      "sse_connection_limit": %d,
+      "tracked_ips": %d,
+      "blocked_ips": %d,
+      "total_requests": %d,
+      "blocked_requests": %d
+    },
+    "metrics": {
+      "current_connections": %d,
+      "websocket_connections": %d,
+      "sse_connections": %d,
+      "requests_last_minute": %.0f,
+      "requests_per_minute_5min_avg": %.1f,
+      "blocked_last_minute": %.0f,
+      "blocked_per_minute_5min_avg": %.1f,
+      "ws_connects_last_minute": %.0f,
+      "ws_connects_per_minute_5min_avg": %.1f,
+      "sse_connects_last_minute": %.0f,
+      "sse_connects_per_minute_5min_avg": %.1f,
+      "total_blocked_ips": %d
+    },
+    "version": "3.0"
+  }
+}`,
+		hostname,
+		status.Enabled,
+		status.RequestsPerSecond,
+		status.BurstSize,
+		int(status.BlockDuration.Seconds()),
+		status.WSMaxConnections,
+		status.SSEMaxConnections,
+		status.TrackedIPs,
+		status.BlockedIPs,
+		status.TotalRequests,
+		status.BlockedRequests,
+		metrics.CurrentConnections,
+		metrics.WebSocketConnections,
+		metrics.SSEConnections,
+		metrics.RequestsLastMinute,
+		metrics.RequestsPerMinute5Avg,
+		metrics.BlockedLastMinute,
+		metrics.BlockedPerMinute5Avg,
+		metrics.WSConnectsLastMinute,
+		metrics.WSConnectsPerMinute5Avg,
+		metrics.SSEConnectsLastMinute,
+		metrics.SSEConnectsPerMinute5Avg,
+		metrics.TotalBlockedIPs,
+	)
+}
+
+func getHostname() string {
+	hostname, _ := os.Hostname()
+	return hostname
 }

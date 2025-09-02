@@ -4,12 +4,26 @@ import (
 	"bufio"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/gorilla/websocket"
 )
+
+// TestMain sets up the test environment
+func TestMain(m *testing.M) {
+	// Initialize rate limiter for tests if not already initialized
+	if rateLimiter == nil {
+		rateLimiter = NewRateLimiter()
+		defer rateLimiter.Close()
+	}
+	
+	// Run tests
+	code := m.Run()
+	os.Exit(code)
+}
 
 // TestWebSocketBasicEcho tests the core WebSocket echo functionality
 func TestWebSocketBasicEcho(t *testing.T) {
