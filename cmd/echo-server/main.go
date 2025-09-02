@@ -511,13 +511,28 @@ func serveHealthCheck(wr http.ResponseWriter, req *http.Request) {
 	reason := "Server is running"
 	httpStatus := http.StatusOK
 	
-	// Optional: Check if rate limiter is functioning
+	// For an echo server expecting many random clients, high IP counts are normal
+	// Only consider degraded if we're seeing signs of actual problems
 	if rateLimiter != nil && rateLimiter.enabled {
 		rlStatus := rateLimiter.GetStatus()
-		// If we're tracking too many IPs, we might be under attack
-		if rlStatus.TrackedIPs > 10000 {
+		metrics := rateLimiter.GetMetrics()
+		
+		// Consider degraded only in extreme cases:
+		// - Over 100k tracked IPs (potential memory issue)
+		// - Over 50% of requests being blocked (potential attack)
+		if rlStatus.TrackedIPs > 100000 {
 			status = "DEGRADED"
-			reason = "High number of tracked IPs"
+			reason = fmt.Sprintf("Very high number of tracked IPs: %d", rlStatus.TrackedIPs)
+		} else if rlStatus.BlockedRequests > 0 && rlStatus.TotalRequests > 0 {
+			blockRate := float64(rlStatus.BlockedRequests) / float64(rlStatus.TotalRequests)
+			if blockRate > 0.5 {
+				status = "DEGRADED"
+				reason = fmt.Sprintf("High block rate: %.1f%%", blockRate*100)
+			}
+		} else if metrics.CurrentConnections > 14000 {
+			// Near connection limit
+			status = "DEGRADED"
+			reason = fmt.Sprintf("Near connection limit: %d/15000", metrics.CurrentConnections)
 		}
 	}
 	

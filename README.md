@@ -101,7 +101,10 @@ Response:
 
 Possible status values:
 - `UP` - Server is running normally
-- `DEGRADED` - Server is running but may have issues (e.g., high number of tracked IPs)
+- `DEGRADED` - Server is running but may have issues:
+  - Over 100,000 tracked IPs (potential memory pressure)
+  - Over 50% of requests being blocked (potential attack)
+  - Near connection limit (>14,000 of 15,000 connections)
 - `DOWN` - Server is not responding (you won't receive this response)
 
 #### Detailed Stats Endpoint
