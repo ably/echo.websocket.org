@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -504,6 +505,66 @@ func printHeaders(w io.Writer, h http.Header) {
 	}
 }
 
+// getMemoryLimit returns the container memory limit in bytes, or system memory if not containerized
+func getMemoryLimit() uint64 {
+	// Try to read cgroup v1 memory limit (works on most container environments)
+	if data, err := os.ReadFile("/sys/fs/cgroup/memory/memory.limit_in_bytes"); err == nil {
+		if limit, err := strconv.ParseUint(strings.TrimSpace(string(data)), 10, 64); err == nil {
+			// Check if it's not the "unlimited" value (9223372036854771712 on 64-bit systems)
+			if limit < uint64(1<<62) {
+				return limit
+			}
+		}
+	}
+	
+	// Try cgroup v2 (newer systems)
+	if data, err := os.ReadFile("/sys/fs/cgroup/memory.max"); err == nil {
+		if trimmed := strings.TrimSpace(string(data)); trimmed != "max" {
+			if limit, err := strconv.ParseUint(trimmed, 10, 64); err == nil {
+				return limit
+			}
+		}
+	}
+	
+	// Fallback to system memory
+	var memStats runtime.MemStats
+	runtime.ReadMemStats(&memStats)
+	return memStats.Sys
+}
+
+// calculateIPThreshold calculates the max number of IPs based on available memory
+func calculateIPThreshold() int {
+	memLimit := getMemoryLimit()
+	
+	// Get config from environment with defaults
+	memPercent := 25.0 // Default: use 25% of memory for IP tracking
+	if val := os.Getenv("HEALTH_IP_MEMORY_PERCENT"); val != "" {
+		if parsed, err := strconv.ParseFloat(val, 64); err == nil && parsed > 0 && parsed <= 100 {
+			memPercent = parsed
+		}
+	}
+	
+	degradedPercent := 80.0 // Default: degraded at 80% of max IPs
+	if val := os.Getenv("HEALTH_DEGRADED_IP_PERCENT"); val != "" {
+		if parsed, err := strconv.ParseFloat(val, 64); err == nil && parsed > 0 && parsed <= 100 {
+			degradedPercent = parsed
+		}
+	}
+	
+	// Calculate thresholds
+	// Assume ~150 bytes per IP (conservative estimate including map overhead)
+	bytesPerIP := 150
+	maxMemoryForIPs := uint64(float64(memLimit) * (memPercent / 100.0))
+	maxIPs := maxMemoryForIPs / uint64(bytesPerIP)
+	degradedThreshold := int(float64(maxIPs) * (degradedPercent / 100.0))
+	
+	// Log the calculation for visibility
+	fmt.Printf("Memory-based IP thresholds: memory=%dMB, using %.0f%% for IPs, degraded at %.0f%% = %d IPs\n",
+		memLimit/(1024*1024), memPercent, degradedPercent, degradedThreshold)
+	
+	return degradedThreshold
+}
+
 // serveHealthCheck returns simplified health status
 func serveHealthCheck(wr http.ResponseWriter, req *http.Request) {
 	// Simple health check - server is up if we can respond
@@ -517,22 +578,40 @@ func serveHealthCheck(wr http.ResponseWriter, req *http.Request) {
 		rlStatus := rateLimiter.GetStatus()
 		metrics := rateLimiter.GetMetrics()
 		
-		// Consider degraded only in extreme cases:
-		// - Over 100k tracked IPs (potential memory issue)
-		// - Over 50% of requests being blocked (potential attack)
-		if rlStatus.TrackedIPs > 100000 {
+		// Calculate dynamic thresholds
+		ipThreshold := calculateIPThreshold()
+		
+		// Get block rate threshold from env
+		blockRateThreshold := 0.5 // Default: 50% block rate
+		if val := os.Getenv("HEALTH_DEGRADED_BLOCK_RATE"); val != "" {
+			if parsed, err := strconv.ParseFloat(val, 64); err == nil && parsed > 0 && parsed <= 100 {
+				blockRateThreshold = parsed / 100.0
+			}
+		}
+		
+		// Get connection threshold from env
+		connThreshold := 0.9 // Default: 90% of max connections
+		if val := os.Getenv("HEALTH_DEGRADED_CONNECTION_PERCENT"); val != "" {
+			if parsed, err := strconv.ParseFloat(val, 64); err == nil && parsed > 0 && parsed <= 100 {
+				connThreshold = parsed / 100.0
+			}
+		}
+		
+		// Check degraded conditions
+		if rlStatus.TrackedIPs > ipThreshold {
 			status = "DEGRADED"
-			reason = fmt.Sprintf("Very high number of tracked IPs: %d", rlStatus.TrackedIPs)
+			reason = fmt.Sprintf("High number of tracked IPs: %d (threshold: %d)", rlStatus.TrackedIPs, ipThreshold)
 		} else if rlStatus.BlockedRequests > 0 && rlStatus.TotalRequests > 0 {
 			blockRate := float64(rlStatus.BlockedRequests) / float64(rlStatus.TotalRequests)
-			if blockRate > 0.5 {
+			if blockRate > blockRateThreshold {
 				status = "DEGRADED"
-				reason = fmt.Sprintf("High block rate: %.1f%%", blockRate*100)
+				reason = fmt.Sprintf("High block rate: %.1f%% (threshold: %.0f%%)", blockRate*100, blockRateThreshold*100)
 			}
-		} else if metrics.CurrentConnections > 14000 {
-			// Near connection limit
+		} else if metrics.CurrentConnections > int64(float64(15000)*connThreshold) {
+			// Near connection limit (15000 is our hard limit from fly.toml)
 			status = "DEGRADED"
-			reason = fmt.Sprintf("Near connection limit: %d/15000", metrics.CurrentConnections)
+			reason = fmt.Sprintf("Near connection limit: %d/15000 (%.0f%%)", 
+				metrics.CurrentConnections, float64(metrics.CurrentConnections)/150.0)
 		}
 	}
 	

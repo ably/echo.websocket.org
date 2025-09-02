@@ -101,11 +101,17 @@ Response:
 
 Possible status values:
 - `UP` - Server is running normally
-- `DEGRADED` - Server is running but may have issues:
-  - Over 100,000 tracked IPs (potential memory pressure)
-  - Over 50% of requests being blocked (potential attack)
-  - Near connection limit (>14,000 of 15,000 connections)
+- `DEGRADED` - Server is running but may have issues (thresholds are configurable):
+  - Too many tracked IPs (dynamically calculated based on available memory)
+  - High percentage of requests being blocked (default: >50%)
+  - Near connection limit (default: >90% of max connections)
 - `DOWN` - Server is not responding (you won't receive this response)
+
+Health check thresholds can be configured via environment variables:
+- `HEALTH_IP_MEMORY_PERCENT` - Max % of memory for IP tracking (default: `25`)
+- `HEALTH_DEGRADED_IP_PERCENT` - % of max IPs before degraded (default: `80`)
+- `HEALTH_DEGRADED_BLOCK_RATE` - Block rate % before degraded (default: `50`)
+- `HEALTH_DEGRADED_CONNECTION_PERCENT` - Connection % before degraded (default: `90`)
 
 #### Detailed Stats Endpoint
 
