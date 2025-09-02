@@ -4,7 +4,7 @@
 [![Deploy](https://github.com/ably/echo.websocket.org/actions/workflows/fly.yml/badge.svg)](https://github.com/ably/echo.websocket.org/actions/workflows/fly.yml)
 
 This is a very simple HTTP echo server with support for websockets and server-sent
-events (SSE), available at https://echo-websocket.fly.dev/
+events (SSE), available at https://echo.websocket.org/
 
 The server is designed for testing HTTP proxies and clients. It echoes
 information about HTTP request headers and bodies back to the client.
@@ -64,6 +64,107 @@ message indicating the connection has been closed.
 For SSE connections: The timeout is absolute from connection start. When the timeout 
 is reached, the server sends an error event with the timeout message before closing 
 the connection.
+
+### Rate Limiting
+
+The server includes built-in rate limiting to prevent abuse. It operates in local mode with per-instance rate limiting.
+
+#### Configuration
+
+Rate limiting can be configured via environment variables:
+
+- `RATE_LIMIT_ENABLED` - Enable/disable rate limiting (default: `true`)
+- `RATE_LIMIT_RPS` - Requests per second per IP (default: `2`)
+- `RATE_LIMIT_BURST` - Burst size for rate limiter (default: `10`)
+- `RATE_LIMIT_BLOCK_DURATION` - Block duration in seconds when rate limit is exceeded (default: `300`)
+- `WEBSOCKET_CONNECTION_LIMIT` - Max concurrent WebSocket connections per IP (default: `3`)
+- `SSE_CONNECTION_LIMIT` - Max concurrent SSE connections per IP (default: `3`)
+
+
+### Health Monitoring
+
+#### Health Check Endpoint
+
+The server exposes a simple health endpoint at `/.health` that provides basic status information:
+
+```bash
+curl https://echo.websocket.org/.health
+```
+
+Response:
+```json
+{
+  "status": "UP",
+  "reason": "Server is running"
+}
+```
+
+Possible status values:
+- `UP` - Server is running normally
+- `DEGRADED` - Server is running but may have issues (thresholds are configurable):
+  - Too many tracked IPs (dynamically calculated based on available memory)
+  - High percentage of requests being blocked (default: >50%)
+  - Near connection limit (default: >90% of max connections)
+- `DOWN` - Server is not responding (you won't receive this response)
+
+Health check thresholds can be configured via environment variables:
+- `HEALTH_IP_MEMORY_PERCENT` - Max % of memory for IP tracking (default: `25`)
+- `HEALTH_DEGRADED_IP_PERCENT` - % of max IPs before degraded (default: `80`)
+- `HEALTH_DEGRADED_BLOCK_RATE` - Block rate % before degraded (default: `50`)
+- `HEALTH_DEGRADED_CONNECTION_PERCENT` - Connection % before degraded (default: `90`)
+
+#### Detailed Stats Endpoint
+
+Detailed metrics are available at `/.stats` with optional basic authentication:
+
+```bash
+# Without authentication (if not configured)
+curl https://echo.websocket.org/.stats | jq
+
+# With authentication (if STATS_USERNAME and STATS_PASSWORD are set)
+curl -u username:password https://echo.websocket.org/.stats | jq
+```
+
+To protect the stats endpoint, set these environment variables:
+- `STATS_USERNAME` - Username for basic auth
+- `STATS_PASSWORD` - Password for basic auth
+
+Response includes comprehensive metrics:
+```json
+{
+  "status": "healthy",
+  "instance": {
+    "hostname": "4d896d95b55478",
+    "rate_limiter": {
+      "enabled": true,
+      "requests_per_second": 2.0,
+      "burst_size": 10,
+      "block_duration_seconds": 300,
+      "websocket_connection_limit": 3,
+      "sse_connection_limit": 3,
+      "tracked_ips": 42,
+      "blocked_ips": 2,
+      "total_requests": 15234,
+      "blocked_requests": 89
+    },
+    "metrics": {
+      "current_connections": 18,
+      "websocket_connections": 15,
+      "sse_connections": 3,
+      "requests_last_minute": 120.0,
+      "requests_per_minute_5min_avg": 580.2,
+      "blocked_last_minute": 2.0,
+      "blocked_per_minute_5min_avg": 0.5,
+      "ws_connects_last_minute": 5.0,
+      "ws_connects_per_minute_5min_avg": 22.0,
+      "sse_connects_last_minute": 2.0,
+      "sse_connects_per_minute_5min_avg": 8.0,
+      "total_blocked_ips": 12
+    },
+    "version": "3.0"
+  }
+}
+```
 
 ### Arbitrary Headers
 
@@ -200,6 +301,7 @@ The GitHub Actions workflow automatically deploys to Fly.io on every push to the
 The deployment uses the Dockerfile which copies the platform-specific binary from `artifacts/build/release/$TARGETPLATFORM/echo-server` to `/bin/echo-server` in the container.
 
 Note: The `FLY_API_TOKEN` secret must be configured in the repository settings for automatic deployment to work.
+
 
 ## License
 
