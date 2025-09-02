@@ -25,7 +25,7 @@ A high-performance WebSocket/SSE echo server running on Fly.io with local rate l
 
 - **Rate Limiting**: Local in-memory with fail-open behavior
 - **Connection Limits**: Per-IP limits to prevent abuse
-- **Health Monitoring**: Real-time metrics via health endpoint
+- **Health Monitoring**: Simple health check at /.health, detailed stats at /.stats
 - **Deployment**: 2 instances on Fly.io with auto-scaling
 
 ## Development Workflow

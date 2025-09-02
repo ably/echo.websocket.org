@@ -2,6 +2,8 @@ package main
 
 import (
 	"bytes"
+	"crypto/subtle"
+	"encoding/base64"
 	"encoding/hex"
 	"fmt"
 	"io"
@@ -139,6 +141,8 @@ func handler(wr http.ResponseWriter, req *http.Request) {
 		serveSSE(wr, req, sendServerHostname, clientIP)
 	} else if req.URL.Path == "/.health" {
 		serveHealthCheck(wr, req)
+	} else if req.URL.Path == "/.stats" {
+		serveStats(wr, req)
 	} else {
 		serveHTTP(wr, req, sendServerHostname)
 	}
@@ -500,8 +504,73 @@ func printHeaders(w io.Writer, h http.Header) {
 	}
 }
 
-// serveHealthCheck returns health status and metrics
+// serveHealthCheck returns simplified health status
 func serveHealthCheck(wr http.ResponseWriter, req *http.Request) {
+	// Simple health check - server is up if we can respond
+	status := "UP"
+	reason := "Server is running"
+	httpStatus := http.StatusOK
+	
+	// Optional: Check if rate limiter is functioning
+	if rateLimiter != nil && rateLimiter.enabled {
+		rlStatus := rateLimiter.GetStatus()
+		// If we're tracking too many IPs, we might be under attack
+		if rlStatus.TrackedIPs > 10000 {
+			status = "DEGRADED"
+			reason = "High number of tracked IPs"
+		}
+	}
+	
+	wr.Header().Set("Content-Type", "application/json")
+	wr.WriteHeader(httpStatus)
+	
+	fmt.Fprintf(wr, `{"status":"%s","reason":"%s"}`, status, reason)
+}
+
+// serveStats returns detailed metrics with optional basic auth
+func serveStats(wr http.ResponseWriter, req *http.Request) {
+	// Check if basic auth is configured
+	statsUser := os.Getenv("STATS_USERNAME")
+	statsPass := os.Getenv("STATS_PASSWORD")
+	
+	// If credentials are configured, require authentication
+	if statsUser != "" && statsPass != "" {
+		auth := req.Header.Get("Authorization")
+		if auth == "" {
+			wr.Header().Set("WWW-Authenticate", `Basic realm="Stats"`)
+			http.Error(wr, "Unauthorized", http.StatusUnauthorized)
+			return
+		}
+		
+		const prefix = "Basic "
+		if !strings.HasPrefix(auth, prefix) {
+			http.Error(wr, "Unauthorized", http.StatusUnauthorized)
+			return
+		}
+		
+		decoded, err := base64.StdEncoding.DecodeString(auth[len(prefix):])
+		if err != nil {
+			http.Error(wr, "Unauthorized", http.StatusUnauthorized)
+			return
+		}
+		
+		credentials := strings.SplitN(string(decoded), ":", 2)
+		if len(credentials) != 2 {
+			http.Error(wr, "Unauthorized", http.StatusUnauthorized)
+			return
+		}
+		
+		// Use constant-time comparison to prevent timing attacks
+		userMatch := subtle.ConstantTimeCompare([]byte(credentials[0]), []byte(statsUser)) == 1
+		passMatch := subtle.ConstantTimeCompare([]byte(credentials[1]), []byte(statsPass)) == 1
+		
+		if !userMatch || !passMatch {
+			http.Error(wr, "Unauthorized", http.StatusUnauthorized)
+			return
+		}
+	}
+	
+	// Return detailed stats
 	status := rateLimiter.GetStatus()
 	metrics := rateLimiter.GetMetrics()
 	hostname := getHostname()

@@ -96,12 +96,18 @@ See README.md for full list. Key variables:
 - `/`: Echo HTTP request
 - `/.ws`: WebSocket test interface
 - `/.sse`: Server-Sent Events stream
-- `/.health`: Health check with metrics
+- `/.health`: Simple health check (UP/DOWN status)
+- `/.stats`: Detailed metrics (optional basic auth)
 
-### Metrics
-- Current open connections (WS/SSE)
-- Request rates (1min/5min)
-- Connection rates by type
-- Blocked IP count
-- Block rates over time
-- Instance status
+### Health Monitoring
+- `/.health`: Simple status check for load balancers
+  - Returns UP/DEGRADED status with reason
+  - No authentication required
+  - Lightweight response
+
+- `/.stats`: Comprehensive metrics endpoint
+  - Optional basic auth protection
+  - Detailed rate limiter statistics
+  - Connection metrics
+  - Request and block rates
+  - Instance information

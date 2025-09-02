@@ -83,58 +83,76 @@ Rate limiting can be configured via environment variables:
 
 ### Health Monitoring
 
-The server exposes a health endpoint at `/.health` that provides comprehensive status information including:
+#### Health Check Endpoint
 
-- Server status and version
-- Rate limiter configuration and metrics
-- Current connections (WebSocket and SSE)
-- Request rates (1min and 5min windows)
-- Blocked IPs and block rates
+The server exposes a simple health endpoint at `/.health` that provides basic status information:
 
-Example:
 ```bash
-curl https://echo.websocket.org/.health | jq
+curl https://echo.websocket.org/.health
 ```
 
 Response:
 ```json
 {
+  "status": "UP",
+  "reason": "Server is running"
+}
+```
+
+Possible status values:
+- `UP` - Server is running normally
+- `DEGRADED` - Server is running but may have issues (e.g., high number of tracked IPs)
+- `DOWN` - Server is not responding (you won't receive this response)
+
+#### Detailed Stats Endpoint
+
+Detailed metrics are available at `/.stats` with optional basic authentication:
+
+```bash
+# Without authentication (if not configured)
+curl https://echo.websocket.org/.stats | jq
+
+# With authentication (if STATS_USERNAME and STATS_PASSWORD are set)
+curl -u username:password https://echo.websocket.org/.stats | jq
+```
+
+To protect the stats endpoint, set these environment variables:
+- `STATS_USERNAME` - Username for basic auth
+- `STATS_PASSWORD` - Password for basic auth
+
+Response includes comprehensive metrics:
+```json
+{
   "status": "healthy",
-  "rate_limiter": {
-    "enabled": true,
-    "requests_per_second": 2.0,
-    "burst_size": 10,
-    "block_duration_seconds": 300,
-    "websocket_connection_limit": 3,
-    "sse_connection_limit": 3,
-    "tracked_ips": 42,
-    "blocked_ips": 2
-  },
-  "metrics": {
-    "current_connections": {
-      "websocket": 15,
-      "sse": 3
-    },
-    "request_rates": {
-      "per_minute": 120.5,
-      "per_5_minutes": 580.2
-    },
-    "websocket_rates": {
-      "per_minute": 5.0,
-      "per_5_minutes": 22.0
-    },
-    "sse_rates": {
-      "per_minute": 2.0,
-      "per_5_minutes": 8.0
-    },
-    "block_rates": {
-      "per_minute": 0.5,
-      "per_5_minutes": 2.0
-    }
-  },
-  "server": {
+  "instance": {
     "hostname": "4d896d95b55478",
-    "version": "2.1"
+    "rate_limiter": {
+      "enabled": true,
+      "requests_per_second": 2.0,
+      "burst_size": 10,
+      "block_duration_seconds": 300,
+      "websocket_connection_limit": 3,
+      "sse_connection_limit": 3,
+      "tracked_ips": 42,
+      "blocked_ips": 2,
+      "total_requests": 15234,
+      "blocked_requests": 89
+    },
+    "metrics": {
+      "current_connections": 18,
+      "websocket_connections": 15,
+      "sse_connections": 3,
+      "requests_last_minute": 120.0,
+      "requests_per_minute_5min_avg": 580.2,
+      "blocked_last_minute": 2.0,
+      "blocked_per_minute_5min_avg": 0.5,
+      "ws_connects_last_minute": 5.0,
+      "ws_connects_per_minute_5min_avg": 22.0,
+      "sse_connects_last_minute": 2.0,
+      "sse_connects_per_minute_5min_avg": 8.0,
+      "total_blocked_ips": 12
+    },
+    "version": "3.0"
   }
 }
 ```
