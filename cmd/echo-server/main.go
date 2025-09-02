@@ -672,6 +672,12 @@ func serveStats(wr http.ResponseWriter, req *http.Request) {
 	wr.Header().Set("Content-Type", "application/json")
 	wr.WriteHeader(http.StatusOK)
 	
+	// Calculate memory usage for tracked IPs
+	estimatedMemoryMB := float64(status.TrackedIPs * 150) / (1024 * 1024)
+	memLimit := getMemoryLimit()
+	memLimitMB := float64(memLimit) / (1024 * 1024)
+	memPercent := (estimatedMemoryMB / memLimitMB) * 100
+	
 	fmt.Fprintf(wr, `{
   "status": "healthy",
   "instance": {
@@ -686,7 +692,10 @@ func serveStats(wr http.ResponseWriter, req *http.Request) {
       "tracked_ips": %d,
       "blocked_ips": %d,
       "total_requests": %d,
-      "blocked_requests": %d
+      "blocked_requests": %d,
+      "estimated_memory_mb": %.1f,
+      "memory_percent": %.1f,
+      "memory_limit_mb": %.0f
     },
     "metrics": {
       "current_connections": %d,
@@ -716,6 +725,9 @@ func serveStats(wr http.ResponseWriter, req *http.Request) {
 		status.BlockedIPs,
 		status.TotalRequests,
 		status.BlockedRequests,
+		estimatedMemoryMB,
+		memPercent,
+		memLimitMB,
 		metrics.CurrentConnections,
 		metrics.WebSocketConnections,
 		metrics.SSEConnections,
