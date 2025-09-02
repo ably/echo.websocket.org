@@ -198,8 +198,7 @@ func serveWebSocket(wr http.ResponseWriter, req *http.Request, sendServerHostnam
 					websocket.FormatCloseMessage(websocket.CloseNormalClosure, timeoutMsg),
 					time.Now().Add(time.Second))
 
-				// Signal goroutine to stop and close the connection
-				close(done)
+				// Close the connection (done channel will be closed by defer)
 				connection.Close()
 
 				fmt.Printf("%s | WebSocket connection timed out after %.2f minutes\n", req.RemoteAddr, timeoutMinutes)
