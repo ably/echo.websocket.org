@@ -3,19 +3,26 @@ on:
   push:
     branches:
       - main
+
+permissions: {}
+
 jobs:
   test:
     name: Test before deploy
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
-        
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version: '1.21'
-          
+
       - name: Get dependencies
         run: go mod download
         
@@ -26,15 +33,19 @@ jobs:
     name: Deploy app
     runs-on: ubuntu-latest
     needs: test
+    permissions:
+      contents: read
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
-        
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version: '1.21'
-          
+
       - name: Build for deployment
         run: |
           mkdir -p artifacts/build/release/linux/amd64
@@ -43,7 +54,7 @@ jobs:
           CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -a -ldflags '-extldflags "-static"' -o artifacts/build/release/linux/arm64/echo-server ./cmd/echo-server
           
       - name: Set up Fly command-line tool
-        uses: superfly/flyctl-actions/setup-flyctl@master
+        uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1 # master
         
       - name: Deploy to Fly
         run: flyctl deploy --remote-only
